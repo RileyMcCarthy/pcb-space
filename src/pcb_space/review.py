@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .compile import CompiledJob
 from .fab import kicad_cli
+from .sch_nets import annotate_sch_file, parse_netlist
 from .sexp import matching_paren
 from .silk import silk_job
 
@@ -237,6 +238,20 @@ def export_zener_schematic(zen: Path, out_dir: Path, cli: Path) -> tuple[Path | 
         sib = sch.with_suffix(ext)
         if sib.exists():
             shutil.copy2(sib, dest_sch.with_suffix(ext))
+    net_path = None
+    for cand in (
+        root / "layout" / zen.stem / "default.net",
+        root / "default.net",
+    ):
+        if cand.exists():
+            net_path = cand
+            break
+    if net_path is None:
+        found = sorted(root.rglob("default.net"))
+        net_path = found[0] if found else None
+    if net_path is not None:
+        annotate_sch_file(dest_sch, net_path)
+        shutil.copy2(dest_sch, sch)
     steps.append(_export_sch_svg(cli, dest_sch, sch_dir))
     pdf = out_dir / "schematic.pdf"
     steps.append(
@@ -274,32 +289,6 @@ def find_bom(pcb: Path) -> Path | None:
         if parent.name == "fab" and (parent / "bom.csv").exists():
             return parent / "bom.csv"
     return None
-
-
-_COMP = re.compile(
-    r'\(comp \(ref "([^"]+)"\)\s+\(value "([^"]*)"\)\s+\(footprint "([^"]*)"',
-)
-_NET_BLOCK = re.compile(
-    r'\(net \(code "[^"]*"\) \(name "([^"]*)"\)(.*?)(?=\n    \(net |\n  \)\n\))',
-    re.S,
-)
-_NODE = re.compile(r'\(node \(ref "([^"]+)"\) \(pin "([^"]*)"\)')
-
-
-def parse_netlist(text: str) -> tuple[list[dict], list[dict]]:
-    comps = [
-        {
-            "ref": m.group(1),
-            "value": m.group(2),
-            "footprint": m.group(3).split(":")[-1],
-        }
-        for m in _COMP.finditer(text)
-    ]
-    nets = []
-    for m in _NET_BLOCK.finditer(text):
-        nodes = [{"ref": r, "pin": p} for r, p in _NODE.findall(m.group(2))]
-        nets.append({"name": m.group(1), "nodes": nodes})
-    return comps, nets
 
 
 def schematic_svg(nets: list[dict]) -> str:
@@ -696,7 +685,7 @@ def review_job(
         f"{len(comps)} components, {len(nets)} nets" if comps else "Netlist not found",
         "3D uses kicad-cli pcb export glb (tracks, pads, zones, silk, mask).",
         "USB-C / ESP32-C6-MINI STEP may be missing from the KiCad 3D library.",
-        "Schematic is pcb apply schematic → kicad-cli sch export svg/pdf.",
+        "Schematic is pcb apply schematic, then pin stubs + global labels from default.net.",
         "Silkscreen refs are legalized (size from courtyard, slots off the body) before plotting.",
         "Do not upload Gerbers from this page.",
     ]
