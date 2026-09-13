@@ -13,9 +13,10 @@ Stop at a copper-free board whose locked poses match the `.place.py` and whose
 unlocked parts are courtyard-legal. Do not open Pcbnew. Do not route. Do not
 Gerber. Do not rewrite KiCadRoutingTools' `/plan-pcb-placement` skill — wrap it.
 
-Tools: `pcb-space place` / `check` / `apply` / `silk`. Engine: KRT `place_seed`
-(`KRT_HOME`, default `~/Downloads/KiCadRoutingTools`). Worked example:
-`examples/c3_usb/`.
+Tools: `pcb-space seed` / `place` / `check` / `refs` / `status` / `apply` / `silk`.
+Engine: KRT `place_seed` (`KRT_HOME`, default `~/Downloads/KiCadRoutingTools`).
+Worked example: `examples/c3_usb/`. The schematic is Zener; this skill starts
+after `pcb build` passed.
 
 ## 0. Inputs
 
@@ -28,15 +29,17 @@ that the engine will “make it fit”.
 ## 1. Seed footprints once
 
 ```bash
-pcb layout --no-open <board>.zen
+pcb-space seed <board>.place.py
+# wraps: pcb layout --no-open <board>.zen
 ```
 
-That is seed-only: unique footprints, usually piled off-outline, **no Edge.Cuts**.
-Never run `pcb layout` on a packed `placed/` board (it duplicates footprints).
-Never treat `pcb layout` as a placer.
+That is seed-only: unique footprints, usually off-outline, **no Edge.Cuts**.
+Never run `pcb layout` (or `pcb-space seed`) on a packed `placed/` / `routed/` /
+`fab/` board — it duplicates footprints. `pcb-space seed` and `pcb-space place`
+refuse those directories. Never treat `pcb layout` as a placer.
 
-If the seed is missing a part the schematic has, re-run `pcb layout --no-open`
-on the **seed** only.
+If the seed is missing a part the schematic has, re-run `pcb-space seed` on the
+**seed** (the `.zen` / `.place.py`), not on `placed/`.
 
 ## 2. `.place.py`
 
@@ -68,6 +71,7 @@ Rejected: `z-index`, `flex`, `px`. `pcb layout` is not a CSS engine.
 ```bash
 pcb-space place <board>.place.py
 pcb-space check <board>.place.py --pcb layout/<name>/placed/layout.kicad_pcb
+pcb-space refs  <board>.place.py --pcb layout/<name>/placed/layout.kicad_pcb
 ```
 
 `place` copies the seed into `placed/` (a second `.kicad_pro` beside the seed
@@ -92,6 +96,7 @@ python3 -X utf8 py_tools/check_floorplan.py placed/layout.kicad_pcb --intent pla
 Pass only if:
 
 - Unique footprint count equals `pcb build` component count
+- `pcb-space refs` has no missing `Place()` names (Zener `R_CC1` maps via `Path`)
 - 0 segments (still unrouted)
 - Spec outline present (`Edge.Cuts` geometry, not just the layer table)
 - Locked refs unmoved (`pcb-space check` ok)

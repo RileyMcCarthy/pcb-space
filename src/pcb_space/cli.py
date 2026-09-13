@@ -8,13 +8,19 @@ from pathlib import Path
 from .apply import apply_job
 from .check import check_job
 from .compile import compile_design
+from .initproj import init_job
 from .language import load_place_file
+from .project import resolve_project
+from .refs import refs_report
 from .route import route_job
 from .fab import fab_job
 from .place import place_job
 from .review import review_job
+from .schematic import lint_zen
+from .seed import seed_job
 from .silk import silk_job
 from .source import check_footprint, import_part, parse_body_mm, search_parts
+from .status import nets_job, status_job
 
 
 def _job(place: Path):
@@ -238,6 +244,103 @@ def cmd_fab(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_init(args: argparse.Namespace) -> int:
+    dest = Path(args.dir)
+    name = args.name
+    if name and args.dir == ".":
+        as_dir = Path(name)
+        if as_dir.is_dir() or "/" in name.replace("\\", "/"):
+            dest = as_dir
+            name = None
+    try:
+        result = init_job(
+            dest,
+            name=name,
+            width=args.width,
+            height=args.height,
+            layers=args.layers,
+            stackup=args.stackup,
+            force=args.force,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    json.dump(result, sys.stdout, indent=2, default=str)
+    sys.stdout.write("\n")
+    if result.get("error") and not result.get("written"):
+        return 1
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    try:
+        result = status_job(Path(args.path))
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    json.dump(result, sys.stdout, indent=2, default=str)
+    sys.stdout.write("\n")
+    return 0
+
+
+def cmd_seed(args: argparse.Namespace) -> int:
+    try:
+        result = seed_job(Path(args.path), force=args.force)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    json.dump(result, sys.stdout, indent=2, default=str)
+    sys.stdout.write("\n")
+    return 2 if result.get("error") else 0
+
+
+def cmd_refs(args: argparse.Namespace) -> int:
+    place = Path(args.place)
+    job = _job(place)
+    pcb = _pcb_path(args, job)
+    if not pcb:
+        try:
+            proj = resolve_project(place)
+        except (FileNotFoundError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        pcb = proj.seed or Path("")
+    if not pcb or not Path(pcb).exists():
+        print("pass --pcb path/to/layout.kicad_pcb (seed or placed)", file=sys.stderr)
+        return 2
+    result = refs_report(job.places, Path(pcb).read_text())
+    result["pcb"] = str(pcb)
+    json.dump(result, sys.stdout, indent=2, default=str)
+    sys.stdout.write("\n")
+    return 1 if result.get("missing") else 0
+
+
+def cmd_lint(args: argparse.Namespace) -> int:
+    try:
+        proj = resolve_project(Path(args.path))
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if not proj.zen or not proj.zen.exists():
+        print("no .zen — schematic is Zener", file=sys.stderr)
+        return 2
+    fails = lint_zen(proj.zen.read_text())
+    json.dump({"zen": str(proj.zen), "ok": fails == [], "failures": fails}, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 1 if fails else 0
+
+
+def cmd_nets(args: argparse.Namespace) -> int:
+    try:
+        result = nets_job(Path(args.place), stub=args.stub)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    json.dump(result, sys.stdout, indent=2, default=str)
+    sys.stdout.write("\n")
+    return 0
+
+
 def cmd_route(args: argparse.Namespace) -> int:
     job = _job(Path(args.place))
     pcb = _route_pcb_path(args, job)
@@ -264,9 +367,42 @@ def cmd_route(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="pcb-space",
-        description="Schematic sourcing, placement, and routing compiler in front of KiCad.",
+        description="Zener schematic, then place/route/fab in front of KiCad.",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    ini = sub.add_parser("init", help="Write pcb.toml, .zen, and .place.py")
+    ini.add_argument("name", nargs="?", help="Board name (default: directory name)")
+    ini.add_argument("-C", "--dir", default=".", help="Project directory")
+    ini.add_argument("--width", type=float, default=40.0)
+    ini.add_argument("--height", type=float, default=30.0)
+    ini.add_argument("--layers", type=int, default=2)
+    ini.add_argument("--stackup", default="jlcpcb_2l_1oz")
+    ini.add_argument("--force", action="store_true")
+    ini.set_defaults(func=cmd_init)
+
+    st = sub.add_parser("status", help="Stage: schematic / seeded / placed / routed / fab")
+    st.add_argument("path", nargs="?", default=".", help=".place.py, .zen, or project directory")
+    st.set_defaults(func=cmd_status)
+
+    sd = sub.add_parser("seed", help="pcb layout --no-open on the .zen (never placed/)")
+    sd.add_argument("path", nargs="?", default=".", help=".place.py, .zen, or project directory")
+    sd.add_argument("--force", action="store_true")
+    sd.set_defaults(func=cmd_seed)
+
+    rf = sub.add_parser("refs", help="Map Place() / Zener names to KiCad references")
+    rf.add_argument("place")
+    rf.add_argument("--pcb")
+    rf.set_defaults(func=cmd_refs)
+
+    ln = sub.add_parser("lint", help="USB-C / MCU USB / layout_path checks on the .zen")
+    ln.add_argument("path", nargs="?", default=".", help=".zen or project directory")
+    ln.set_defaults(func=cmd_lint)
+
+    nt = sub.add_parser("nets", help="NetReq coverage vs .zen / board nets")
+    nt.add_argument("place")
+    nt.add_argument("--stub", action="store_true", help="Print NetReq() lines from the .zen")
+    nt.set_defaults(func=cmd_nets)
 
     c = sub.add_parser("compile", help="Print compiled JSON")
     c.add_argument("place")

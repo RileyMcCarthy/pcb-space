@@ -42,4 +42,4 @@ Keepout(
 
 NetReq("USB_DP", "USB_DN", kind="usb_hs", z_diff_ohm=90, pair=True)
 NetReq("VBUS", "3V3", "GND", kind="power", volts=3.3, amps=0.5)
-NetReq("EN", "BOOT", kind="digital")
+NetReq("EN", "BOOT", "LED", "LED_A", "CC1", "CC2", kind="digital")

@@ -12,9 +12,9 @@ description: >
 
 Stop at a netlist `pcb build` accepts and a BOM that lists **the MPNs you sourced**. Do not open Pcbnew. Do not run `pcb layout` or `pcb dfm` as schematic sign-off.
 
-Tools: `pcb` (Zener), `pcb-space source` / `pcb-source`. Default fab is JLCPCB (`--fab jlcpcb`).
+Tools: `pcb` (Zener), `pcb-space source` / `pcb-source`, `pcb-space lint`. Default fab is JLCPCB (`--fab jlcpcb`). pcb-space does **not** replace Zener — the schematic is a `.zen`.
 
-Worked example: pcb-space `examples/c3_usb/`.
+Worked example: pcb-space `examples/c3_usb/`. New board: `pcb-space init <name> -C <dir>`.
 
 ## 0. Spec (write this first, in the board dir)
 
@@ -81,12 +81,14 @@ LDO: Cin/Cout from the datasheet; EN must not float.
 ```bash
 pcb build <board>.zen          # must print ✓
 pcb bom <board>.zen            # every row's MPN is one you imported
+pcb-space lint <board>.zen     # USB-C both orientations, CC Rd, ESP32 D+/D−
 pcb-space source check <ic-pkg> --body …   # every IC land
 ```
 
 Pass only if:
 
 - `pcb build` succeeds
+- `pcb-space lint` is empty (or each failure is a named datasheet exception)
 - BOM MPNs match `SOURCE.json` / the `mpn=` you wrote (not a substituted Murata/Yageo)
 - Every IC `source check --body` is ok, or the miss is named and a replacement land is attached
 - USB/straps/LDO EN match the datasheet notes in §0–3

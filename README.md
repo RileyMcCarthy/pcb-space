@@ -1,23 +1,66 @@
 # pcb-space
 
-Zener-style **compiler in front of KiCad** for placement and routing.
+**Zener (`pcb`) is the schematic language. pcb-space is the spatial compiler and fab packager in front of KiCad.**
 
-You write requirements and a few locked connector poses. The compiler turns ohms / amps / hertz into track geometry. A free engine (KiCadRoutingTools, later DeepPCB/Quilter) places unlocked parts and routes. KiCad DRC’s and writes Gerbers. The agent never has to click Pcbnew.
+This is not a Zener fork and not a schematic tool. You write a `.zen` board, `pcb build` it, and `pcb-space seed` wraps `pcb layout --no-open` to drop unique footprints. pcb-space then places, routes, silks, and writes JLCPCB files. The agent never has to click Pcbnew.
 
 ```
 pcb-space source   MPN / LCSC → Zener package + SOURCE.json
       ↓
-.zen schematic     Zener Component() + Part(mpn=…)
+.zen               Zener: Net / Module / pcb build
+      ↓
+pcb-space seed     pcb layout --no-open   (seed only — never placed/)
       ↓
 .place.py          Place() + NetReq()     (git, AI-writable)
       ↓ compile
 geometry           width / gap / clearance / layers / skip-autoroute
       ↓ place
-.kicad_pcb         outline, locked CSS poses, KRT-legalized free parts
-      ↓ check
-intent tests       “USB-C still on the east edge” · “land matches 1.5×1.5”
+placed/            outline, locked CSS poses, KRT-legalized free parts
+      ↓ check / refs
+intent tests       “USB-C still on the south edge”
       ↓ route
-engine             KRT / DeepPCB / Quilter
+routed/            KRT (USB pair, signals, 2-layer GND last)
+      ↓ fab
+fab/               Gerbers, JLC BOM/CPL, fiducials
+```
+
+`pcb layout` on `placed/`, `routed/`, or `fab/` duplicates footprints. `pcb-space seed` and `pcb-space place` refuse those directories.
+
+## Getting started
+
+You need four tools on `PATH`:
+
+| Tool | Role |
+|---|---|
+| [`pcb`](https://github.com/diodeinc/pcb) (Zener) | Schematic, `pcb build`, `pcb layout --no-open` |
+| `pcb-space` | Place, route, silk, fab, source, status |
+| KiCad 10 `kicad-cli` | DRC, Gerbers, review SVGs |
+| KiCadRoutingTools (`KRT_HOME`, default `~/Downloads/KiCadRoutingTools`) | Place legalize + route engine |
+
+```bash
+pip install -e ".[dev]"          # this repo
+# pcb: https://github.com/diodeinc/pcb  → ~/.local/bin/pcb
+# KiCad 10: macOS app, or Ubuntu ppa:kicad/kicad-10.0-releases
+export KRT_HOME=~/Downloads/KiCadRoutingTools
+
+pcb-space init blinky -C ./blinky
+# then source parts, write the .zen, then:
+pcb build blinky.zen
+pcb-space seed blinky.place.py
+pcb-space place blinky.place.py
+pcb-space check blinky.place.py --pcb layout/blinky/placed/layout.kicad_pcb
+pcb-space route blinky.place.py
+pcb-space fab blinky.place.py
+pcb-space status blinky.place.py
+```
+
+Worked PCBA (already seeded/placed/routed in git):
+
+```bash
+pcb-space lint    examples/c3_usb/c3_usb.zen
+pcb-space refs    examples/c3_usb/c3_usb.place.py
+pcb-space status  examples/c3_usb
+pcb-space check   examples/c3_usb/c3_usb.place.py --pcb examples/c3_usb/layout/c3_usb/placed/layout.kicad_pcb
 ```
 
 ## Why this exists
@@ -28,7 +71,7 @@ KiCad 10 already *uses* 0.20 mm traces and *checks* clearance. It will not:
 - keep “USB-C at this end, this offset, for the enclosure” in git
 - autoroute from a CLI an agent can call
 
-Zener is still the schematic language (`Net`, `Module`, `pcb build`). pcb-space now also **sources** parts (LCSC first; DigiKey/Mouser when API keys exist) and gates the land against the datasheet body. Placement/routing remain the spatial half.
+Zener (`Net`, `Module`, `pcb build`) is required for the netlist. pcb-space **sources** parts (LCSC first; DigiKey/Mouser when API keys exist), gates the land against the datasheet body, and compiles placement/routing. `pcb-space lint` checks USB-C both-orientations / CC Rd / ESP32 D+/D− on the `.zen`.
 
 Analog EMG and switching nodes stay `autoroute=False` until you say otherwise. A maze that “meets 0.2 mm width” can still ruin a boost SW loop.
 
@@ -38,7 +81,7 @@ Analog EMG and switching nodes stay `autoroute=False` until you say otherwise. A
 pip install -e ".[dev]"
 ```
 
-Python 3.11+. No extra dependencies for compile / apply / check.
+Python 3.11+. Compile / apply / check need no extra Python packages. Zener (`pcb`), KiCad 10, and KRT are required for seed / place / route / fab — see Getting started.
 
 ## Place file
 
@@ -140,6 +183,12 @@ Worked example: `examples/c3_usb/` (USB-C ESP32-C3 node). EasyEDA’s ESP32 land
 ## Commands
 
 ```bash
+pcb-space init    blinky -C ./blinky
+pcb-space lint    examples/c3_usb/c3_usb.zen
+pcb-space seed    examples/c3_usb/c3_usb.place.py   # pcb layout --no-open; seed only
+pcb-space status  examples/c3_usb
+pcb-space refs    examples/c3_usb/c3_usb.place.py
+pcb-space nets    examples/c3_usb/c3_usb.place.py --stub
 pcb-space compile examples/blinky.place.py
 pcb-space apply   examples/blinky.place.py --pcb path/to/layout.kicad_pcb
 pcb-space place   examples/c3_usb/c3_usb.place.py
@@ -155,7 +204,13 @@ Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI runs 
 
 `apply` locks `Place(..., locked=True)` footprints, writes the `Edge.Cuts` outline from `Board` size when the seed has none, writes net classes into the sibling `.kicad_pro`, writes `.kicad_dru`, and inserts keepout zones. It copies the board to `*.kicad_pcb.bak-pcbspace` first.
 
-`place` copies the seed, runs `apply` on the copy, compiles a KRT floorplan-intent (locks, edge bands, keepouts), and legalizes unlocked parts with `place_seed --force --anchors-first`. Locked CSS poses are file-locks; the engine must not move them. Output is `placed/layout.kicad_pcb` next to the seed (a second `.kicad_pro` in the seed directory would make `pcb layout` refuse the project). `pcb layout` is seed-only (`--no-open` once for unique footprints) — never a placer.
+`seed` runs `pcb layout --no-open` on the sibling `.zen` and refuses if the target is under `placed/`, `routed/`, or `fab/`, or already has copper.
+
+`place` copies the **seed**, runs `apply` on the copy, compiles a KRT floorplan-intent (locks, edge bands, keepouts), and legalizes unlocked parts with `place_seed --force --anchors-first`. Locked CSS poses are file-locks; the engine must not move them. Output is `placed/layout.kicad_pcb` next to the seed (a second `.kicad_pro` in the seed directory would make `pcb layout` refuse the project). `pcb layout` is seed-only — never a placer. `pcb-space place` on a packed board is an error.
+
+`status` reports the stage (schematic / seeded / placed / routed / fab), whether `pcb build` is green, `lint` failures, missing `Place()` names, and nets with no `NetReq`.
+
+`refs` maps Zener instance names (`R_CC1`) to KiCad references (`R2`) via footprint `Path`.
 
 `check` fails if a locked part moved or a named keepout disappeared.
 
@@ -165,14 +220,14 @@ Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI runs 
 
 ## What this is not
 
-- Not a fork of [Zener / pcb](https://github.com/diodeinc/pcb). Use `pcb build` for the netlist; this tool consumes the KiCad board.
+- Not a fork of [Zener / pcb](https://github.com/diodeinc/pcb) and not a replacement for it. The schematic is Zener. This tool consumes the KiCad board Zener seeded.
 - Not Pcbnew. Interactive routing stays in KiCad for leftover analog you want by hand.
 - Not an LLM dumping `(segment …)` into the s-expression.
 - Not a CSS layout engine. No flex, no grid, no `px`. Locked parts get a CSS **containing block**. Unlocked parts get a placer.
 
 ## Status
 
-v0.3: `source search|import|check` (LCSC + body-size gate); `pcb-source` alias; CSS box model for locked parts; `pcb-space place` wraps KRT `place_seed` and honors those locks.
+v0.4: Zener is required (`pcb build` / `pcb-space seed`). `init`, `status`, `seed`, `refs`, `lint`, `nets`. `source search|import|check`; CSS locks; `place` / `route` / `silk` / `fab` / `review`. CI installs KiCad 10 and produces the c3_usb JLC package.
 
 ## License
 

@@ -40,12 +40,12 @@ Zener `pcb bom` still leaves LCSC blank on some house MPNs (UniOhm / HRO / ST na
 40×30 mm. USB-C (`J1`) locked on the **south** edge at (20.0, 25.85) r0 — rot 0 so KRT’s pad AABBs match the land (a 90° receptacle looked overlapped to the router). ESP32 (`U1`) locked at (12.25, 7.85) r90, antenna west, north of the receptacle. KiCad’s MINI-1 courtyard used to include the RF keep-out (43×32 mm, larger than the board); the land’s CrtYd is now the 13.2×16.6 mm body + 0.25 mm.
 
 ```bash
-pcb layout --no-open c3_usb.zen          # seed only: unique footprints, no outline
+pcb-space seed c3_usb.place.py           # wraps pcb layout --no-open; seed only
 pcb-space place c3_usb.place.py          # outline + CSS locks + KRT legalize
 pcb-space check c3_usb.place.py --pcb layout/c3_usb/placed/layout.kicad_pcb
 ```
 
-Do **not** re-run `pcb layout` on `placed/`. That is a packed board; `pcb layout` is seed-only.
+Do **not** re-run `pcb layout` (or `pcb-space seed`) on `placed/`. That is a packed board; `pcb layout` is seed-only.
 
 | Check | Result |
 |---|---|

@@ -15,6 +15,8 @@ skill — wrap it.
 
 Tools: `pcb-space route`. Engine: KRT (`KRT_HOME`). Input is the **placed**
 board from `/design-pcb-placement`. Worked example: `examples/c3_usb/`.
+`pcb-space status` should say `placed` (or `routed` after this skill). Do not
+run `pcb layout` on `placed/`.
 
 ## 0. Inputs
 
