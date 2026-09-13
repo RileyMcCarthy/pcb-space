@@ -128,7 +128,7 @@ def write_bom_csv(rows: list[dict], path: Path) -> None:
 def kicad_pos_to_jlc_cpl(pos_csv: str) -> str:
     reader = csv.DictReader(io.StringIO(pos_csv))
     out = io.StringIO()
-    w = csv.writer(out)
+    w = csv.writer(out, lineterminator="\n")
     w.writerow(["Designator", "Mid X", "Mid Y", "Rotation", "Layer"])
     for row in reader:
         ref = (row.get("Ref") or row.get("Designator") or "").strip().strip('"')
@@ -140,6 +140,44 @@ def kicad_pos_to_jlc_cpl(pos_csv: str) -> str:
         side = (row.get("Side") or row.get("Layer") or "top").strip().strip('"').lower()
         layer = "Top" if side.startswith("top") or side == "front" else "Bottom"
         w.writerow([ref, x.strip().strip('"'), y.strip().strip('"'), rot.strip().strip('"'), layer])
+    return out.getvalue()
+
+
+def footprint_side(block: str) -> str:
+    m = re.search(r'\n\t\t\(layer "([^"]+)"\)', block)
+    if not m:
+        m = re.search(r'\(layer "([^"]+)"\)', block)
+    layer = m.group(1) if m else "F.Cu"
+    if layer.startswith("B.") or layer in ("B.Cu", "Bottom"):
+        return "Bottom"
+    return "Top"
+
+
+def jlc_cpl_from_board(pcb_text: str) -> str:
+    """JLC CPL from footprint (at ...) — does not need kicad-cli pos.
+
+    Y is negated to match KiCad POS / JLCPCB (file Y-down vs pick-place).
+    """
+    rows: list[tuple[str, str, str, str, str]] = []
+    for start, end in board_footprint_spans(pcb_text):
+        block = pcb_text[start:end]
+        ref = footprint_reference(block)
+        if not ref or ref.startswith("FID"):
+            continue
+        if "exclude_from_pos_files" in block:
+            continue
+        at = footprint_at(block)
+        if not at:
+            continue
+        x, y, rot = at
+        rows.append(
+            (ref, f"{x:.6f}", f"{-y:.6f}", f"{rot:.6f}", footprint_side(block))
+        )
+    rows.sort(key=lambda r: r[0])
+    out = io.StringIO()
+    w = csv.writer(out, lineterminator="\n")
+    w.writerow(["Designator", "Mid X", "Mid Y", "Rotation", "Layer"])
+    w.writerows(rows)
     return out.getvalue()
 
 
@@ -421,34 +459,45 @@ def fab_job(
         return result
 
     drc_json = out_dir / "drc.json"
-    steps.append(
-        _run(
-            [
-                str(cli),
-                "pcb",
-                "drc",
-                "--refill-zones",
-                "--save-board",
-                "--format",
-                "json",
-                "--severity-error",
-                "-o",
-                str(drc_json),
-                str(work),
-            ]
-        )
+    drc_step = _run(
+        [
+            str(cli),
+            "pcb",
+            "drc",
+            "--refill-zones",
+            "--save-board",
+            "--format",
+            "json",
+            "--severity-error",
+            "-o",
+            str(drc_json),
+            str(work),
+        ]
     )
+    steps.append(drc_step)
     drc_doc: dict = {}
     if drc_json.exists():
         try:
             drc_doc = json.loads(drc_json.read_text())
         except json.JSONDecodeError:
             drc_doc = {}
+    elif drc_step["returncode"] != 0:
+        err = (drc_step["stderr"] or drc_step["stdout"] or "no output").strip()
+        result["error"] = (
+            "kicad-cli DRC did not write json (need KiCad 10 for this board): "
+            + err[-500:]
+        )
+        _write_notes(out_dir, job, result)
+        return result
     floor = 0.10 if job.layers <= 2 else 0.16
     copper_err = copper_drc_errors(drc_doc, floor_mm=floor)
     result["drc_floor_mm"] = floor
     result["drc_copper_errors"] = len(copper_err)
 
+    # CPL from the board file. kicad-cli pos is provenance only — Ubuntu's
+    # KiCad 7 cannot load a KiCad 10 board and writes an empty POS.
+    text = work.read_text()
+    (out_dir / "cpl.csv").write_text(jlc_cpl_from_board(text))
     pos_raw = out_dir / "pos_kicad.csv"
     steps.append(
         _run(
@@ -469,15 +518,9 @@ def fab_job(
             ]
         )
     )
-    if pos_raw.exists():
-        (out_dir / "cpl.csv").write_text(kicad_pos_to_jlc_cpl(pos_raw.read_text()))
 
     cpl_path = out_dir / "cpl.csv"
-    missing_cpl: list[str] = []
-    if cpl_path.exists():
-        missing_cpl = sorted(bom_refs(bom_rows) - cpl_refs(cpl_path.read_text()))
-    else:
-        missing_cpl = sorted(bom_refs(bom_rows))
+    missing_cpl = sorted(bom_refs(bom_rows) - cpl_refs(cpl_path.read_text()))
     result["bom_not_in_cpl"] = missing_cpl
 
     if copper_err:

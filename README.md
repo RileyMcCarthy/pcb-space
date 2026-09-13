@@ -151,7 +151,7 @@ pcb-space review  examples/c3_usb/c3_usb.place.py
 pcb-space source  search "100nF 0402"
 ```
 
-Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI runs the unit tests, then `pcb-space fab` on the committed routed board so Gerbers / JLC BOM / CPL are produced without clicking Pcbnew. Full re-place / re-route needs `KRT_HOME` and is not run on GitHub Actions.
+Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI runs the unit tests, then `pcb-space fab` on the committed routed board so Gerbers / JLC BOM / CPL are produced without clicking Pcbnew. The fab job installs KiCad 10 from the KiCad PPA (Ubuntu’s `kicad` package is 7.x and cannot load these boards). Full re-place / re-route needs `KRT_HOME` and is not run on GitHub Actions.
 
 `apply` locks `Place(..., locked=True)` footprints, writes the `Edge.Cuts` outline from `Board` size when the seed has none, writes net classes into the sibling `.kicad_pro`, writes `.kicad_dru`, and inserts keepout zones. It copies the board to `*.kicad_pcb.bak-pcbspace` first.
 
@@ -161,7 +161,7 @@ Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI runs 
 
 `route` picks the `placed/` board when it exists, refreshes net classes, routes USB pairs (`route_diff`), then signals, then on 2-layer pours GND last and finalizes. Analog / switch-node nets stay in `skip_autoroute`. Output is `routed/layout.kicad_pcb`. `--script-only` writes the plan without running it. Set `KRT_HOME` if the router is not in `~/Downloads/KiCadRoutingTools`. True 90 Ω USB needs 4-layer; 1.6 mm 2-layer is a tightly-coupled fab-floor pair, not 90 Ω.
 
-`fab` picks `routed/` when it exists, inserts three F.Cu fiducials, writes JLCPCB `bom.csv` / `cpl.csv` (LCSC from `SOURCE.json`), Gerbers, drill, and `FAB_NOTES.md` (via-in-pad). It does not upload. Copper `kicad-cli` DRC errors fail the command.
+`fab` picks `routed/` when it exists, inserts three F.Cu fiducials, writes JLCPCB `bom.csv` / `cpl.csv` (LCSC from `SOURCE.json`; CPL from footprint positions, Y negated like KiCad POS), Gerbers, drill, and `FAB_NOTES.md` (via-in-pad). It does not upload. Copper `kicad-cli` DRC errors fail the command. KiCad 10 is required for DRC/Gerbers.
 
 ## What this is not
 

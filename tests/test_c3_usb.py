@@ -10,7 +10,15 @@ import pytest
 from pcb_space.check import check_job
 from pcb_space.cli import main
 from pcb_space.compile import compile_design
-from pcb_space.fab import bom_refs, cpl_refs, fab_job, jlc_bom, kicad_cli, lcsc_index
+from pcb_space.fab import (
+    bom_refs,
+    cpl_refs,
+    fab_job,
+    jlc_bom,
+    jlc_cpl_from_board,
+    kicad_cli,
+    lcsc_index,
+)
 from pcb_space.language import load_place_file
 from pcb_space.route import krt_commands
 from pcb_space.silk import legalize_silk, silk_job
@@ -96,6 +104,16 @@ def test_c3_usb_bom_every_row_has_lcsc():
     assert all(r["LCSC Part #"].startswith("C") for r in rows)
     assert any("C165948" in r["LCSC Part #"] for r in rows)
     assert any("C2838502" in r["LCSC Part #"] for r in rows)
+
+
+def test_c3_usb_cpl_from_routed_board():
+    cpl = jlc_cpl_from_board(ROUTED.read_text())
+    refs = cpl_refs(cpl)
+    assert "J1" in refs and "U1" in refs
+    assert len(refs) == 19
+    assert "J1,20.000000,-25.850000,0.000000,Top" in cpl
+    assert "U1,12.250000,-7.850000,90.000000,Top" in cpl
+    assert not any(r.startswith("FID") for r in refs)
 
 
 def test_c3_usb_committed_bom_matches_cpl():
