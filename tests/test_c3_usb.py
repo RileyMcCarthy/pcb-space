@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
@@ -16,7 +15,6 @@ from pcb_space.fab import (
     fab_job,
     jlc_bom,
     jlc_cpl_from_board,
-    kicad_cli,
     lcsc_index,
 )
 from pcb_space.language import load_place_file
@@ -154,10 +152,7 @@ def test_c3_usb_silk_job_copy(tmp_path: Path):
 
 
 @pytest.mark.kicad
-def test_c3_usb_fab_package(tmp_path: Path):
-    cli = kicad_cli()
-    if not cli.exists() and not shutil.which(str(cli)):
-        pytest.skip("kicad-cli not installed")
+def test_c3_usb_fab_package(tmp_path: Path, require_kicad):
     job = _job()
     out = tmp_path / "fab"
     result = fab_job(job, ROUTED, out_dir=out, components=C3 / "components")

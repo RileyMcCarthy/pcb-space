@@ -186,7 +186,7 @@ pcb-space review  examples/c3_usb/c3_usb.place.py
 pcb-space source  search "100nF 0402"
 ```
 
-Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI runs the unit tests, then `pcb-space fab` on the committed routed board so Gerbers / JLC BOM / CPL are produced without clicking Pcbnew. The fab job installs KiCad 10 from the KiCad PPA (Ubuntu’s `kicad` package is 7.x and cannot load these boards). Full re-place / re-route needs `KRT_HOME` and is not run on GitHub Actions.
+Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI job `pytest` runs every test except those marked `kicad`. Job `c3-usb-fab` installs KiCad 10, runs the **full** suite (kicad tests may not skip), then `pcb-space fab` on the committed routed board. Both jobs are required to merge to `master`. Full re-place / re-route needs `KRT_HOME` and is not run on GitHub Actions.
 
 `apply` locks `Place(..., locked=True)` footprints, writes the `Edge.Cuts` outline from `Board` size when the seed has none, writes net classes into the sibling `.kicad_pro`, writes `.kicad_dru`, and inserts keepout zones. It copies the board to `*.kicad_pcb.bak-pcbspace` first.
 
@@ -215,7 +215,7 @@ Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI runs 
 
 ## Status
 
-v0.4: `pcb-space build` is the compiler (schematic → seed → place → route → fab). Zener is required for the netlist. `init`, `status`, `seed`, `refs`, `lint`, `nets`. CSS locks; `place` / `route` / `silk` / `fab` / `review`. CI fabs the committed routed board (does not re-place).
+v0.4: `pcb-space build` is the compiler (schematic → seed → place → route → fab). Zener is required for the netlist. `init`, `status`, `seed`, `refs`, `lint`, `nets`. CSS locks; `place` / `route` / `silk` / `fab` / `review`. CI: `pytest` (no KiCad) + `c3-usb-fab` (full suite + JLC package); both required to merge.
 
 ## License
 
