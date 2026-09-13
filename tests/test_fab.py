@@ -10,6 +10,7 @@ from pcb_space.fab import (
     cpl_refs,
     insert_fiducials,
     jlc_bom,
+    jlc_cpl_from_board,
     kicad_pos_to_jlc_cpl,
     lcsc_index,
     via_in_pad,
@@ -47,6 +48,20 @@ def test_pos_to_cpl_columns():
     cpl = kicad_pos_to_jlc_cpl(raw)
     assert cpl.startswith("Designator,Mid X,Mid Y,Rotation,Layer")
     assert "J1,20.0,-25.85,0,Top" in cpl.replace(" ", "") or "J1,20.0,-25.85,0,Top" in cpl
+
+
+def test_jlc_cpl_from_board_negates_y():
+    src = (FIXTURES / "tiny.kicad_pcb").read_text()
+    cpl = jlc_cpl_from_board(src)
+    assert cpl.startswith("Designator,Mid X,Mid Y,Rotation,Layer")
+    assert "J1,5.000000,-5.000000,0.000000,Top" in cpl
+    assert "FID" not in cpl
+
+
+def test_jlc_cpl_skips_exclude_from_pos():
+    src = (FIXTURES / "tiny.kicad_pcb").read_text()
+    src = src.replace("(attr smd)", "(attr smd exclude_from_pos_files)")
+    assert cpl_refs(jlc_cpl_from_board(src)) == set()
 
 
 def test_insert_fiducials(tmp_path: Path):
