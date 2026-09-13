@@ -30,6 +30,18 @@ def layer_costs(job: CompiledJob) -> list[str]:
     return [str(costs[name]) for name in layers]
 
 
+def via_size_drill(job: CompiledJob) -> tuple[str, str]:
+    """Compiled via (IPC-ish 0.45/0.20). USB-C underpad fanout keeps 0.25/0.15."""
+    for cls in job.classes:
+        return f"{cls.via_diameter_mm:g}", f"{cls.via_drill_mm:g}"
+    return "0.45", "0.20"
+
+
+def _via_args(job: CompiledJob) -> list[str]:
+    d, h = via_size_drill(job)
+    return ["--via-size", d, "--via-drill", h]
+
+
 def krt_commands(
     job: CompiledJob,
     pcb: Path,
@@ -104,6 +116,9 @@ def krt_commands(
                 *[n for n, _ in job.planes],
                 "--plane-layers",
                 *[l for _, l in job.planes],
+                "--same-net-pad-clearance",
+                floor,
+                *_via_args(job),
             ]
         )
         prev = s1
@@ -139,6 +154,9 @@ def krt_commands(
             "--keep-input-copper",
             "--grid-step",
             "0.05" if job.layers <= 2 else "0.1",
+            "--same-net-pad-clearance",
+            floor,
+            *_via_args(job),
         ]
         # 4-layer 90 Ω is manufacturable. 1.6 mm 2-layer is not — width is
         # already clamped; do not pass --impedance or KRT will widen it again.
@@ -179,6 +197,9 @@ def krt_commands(
                 "5",
                 "--no-bga-zones",
                 "--keep-input-copper",
+                "--same-net-pad-clearance",
+                floor,
+                *_via_args(job),
             ]
         )
         prev = s_sens
@@ -213,6 +234,9 @@ def krt_commands(
         "5",
         "--no-bga-zones",
         "--keep-input-copper",
+        "--same-net-pad-clearance",
+        floor,
+        *_via_args(job),
     ]
     if power:
         cmd.extend(["--power-nets", *power, "--power-nets-widths", *widths])
@@ -239,6 +263,9 @@ def krt_commands(
                 "--plane-layers",
                 "F.Cu",
                 "B.Cu",
+                "--same-net-pad-clearance",
+                floor,
+                *_via_args(job),
             ]
         )
         prev = s_pour
@@ -264,10 +291,47 @@ def krt_commands(
             "--grid-step",
             "0.05",
             "--keep-input-copper",
+            "--same-net-pad-clearance",
+            floor,
+            *_via_args(job),
         ]
         if power:
             fin.extend(["--power-nets", *power, "--power-nets-widths", *widths])
         cmds.append(fin)
+
+    # SNPC leaves some GND pins (HTSSOP PGND) without via-in-pad. One
+    # keep-input-copper GND pass lets KRT plane-finalize dog-bone them.
+    if job.layers > 2 and any(n == "GND" for n, _ in job.planes):
+        s_tap = work / "04_gnd_taps.kicad_pcb"
+        cmds.append(
+            [
+                str(py),
+                "-X",
+                "utf8",
+                str(router / "route.py"),
+                str(prev),
+                str(s_tap),
+                "--nets",
+                "GND",
+                "--layers",
+                *layers,
+                "--layer-costs",
+                *costs,
+                "--track-width",
+                floor,
+                "--clearance",
+                floor,
+                "--grid-step",
+                "0.1",
+                "--max-ripup",
+                "8",
+                "--no-bga-zones",
+                "--keep-input-copper",
+                "--same-net-pad-clearance",
+                floor,
+                *_via_args(job),
+            ]
+        )
     return cmds
 
 

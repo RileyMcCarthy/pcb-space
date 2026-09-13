@@ -2,7 +2,7 @@ from pathlib import Path
 
 from pcb_space.compile import compile_design
 from pcb_space.language import load_place_file
-from pcb_space.route import copper_layers, krt_commands
+from pcb_space.route import copper_layers, krt_commands, via_size_drill
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,3 +58,35 @@ def test_sensitive_pass_is_front_copper_only():
     analog_layers = analog[analog.index("--layers") + 1 : analog.index("--layer-costs")]
     assert analog_layers == ["F.Cu"]
     assert cmds.index(analog) < cmds.index(maze)
+
+
+def test_maze_forbids_via_in_pad_usb_fanout_keeps_it():
+    job = compile_design(load_place_file(ROOT / "examples" / "c3_usb" / "c3_usb.place.py"))
+    cmds = krt_commands(job, Path("/tmp/placed.kicad_pcb"), work=Path("/tmp/routed-vip"))
+    fanout = next(c for c in cmds if any(str(p).endswith("qfn_fanout.py") for p in c))
+    assert "--allow-via-in-pad" in fanout
+    assert "--same-net-pad-clearance" not in fanout
+    assert fanout[fanout.index("--via-size") + 1] == "0.25"
+    maze = next(c for c in cmds if "*" in c and any(str(p).endswith("route.py") for p in c))
+    assert maze[maze.index("--same-net-pad-clearance") + 1] == "0.10"
+    assert maze[maze.index("--via-size") + 1] == "0.45"
+    assert maze[maze.index("--via-drill") + 1] == "0.2"
+
+
+def test_four_layer_planes_forbid_via_in_pad():
+    job = compile_design(load_place_file(ROOT / "examples" / "buck_sw" / "buck_sw.place.py"))
+    cmds = krt_commands(job, Path("/tmp/placed.kicad_pcb"), work=Path("/tmp/routed-4l"))
+    planes = next(c for c in cmds if any(str(p).endswith("route_planes.py") for p in c))
+    assert planes[planes.index("--same-net-pad-clearance") + 1] == "0.16"
+    maze = next(c for c in cmds if "*" in c and any(str(p).endswith("route.py") for p in c))
+    assert maze[maze.index("--same-net-pad-clearance") + 1] == "0.16"
+    assert maze[maze.index("--via-size") + 1] == "0.45"
+    taps = next(
+        c
+        for c in cmds
+        if any(str(p).endswith("04_gnd_taps.kicad_pcb") for p in c)
+    )
+    assert taps[taps.index("--nets") + 1] == "GND"
+    assert "--keep-input-copper" in taps
+    d, h = via_size_drill(job)
+    assert (d, h) == ("0.45", "0.2")

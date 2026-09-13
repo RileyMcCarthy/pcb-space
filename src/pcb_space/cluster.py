@@ -11,6 +11,26 @@ from .geom import footprint_box_local
 from .sexp import board_footprint_spans, footprint_at, footprint_reference
 
 
+def release_engine_locks(job: CompiledJob, text: str, aliases: dict | None = None) -> str:
+    """KRT may lock large unlocked parts (anchors). Only CSS locked=True stays locked."""
+    keep = {p.ref for p in job.places if p.locked}
+    if aliases:
+        keep.update(aliases.get(r, r) for r in list(keep))
+        keep.update(v for k, v in aliases.items() if k in keep)
+    pieces: list[str] = []
+    last = 0
+    for start, end in board_footprint_spans(text):
+        block = text[start:end]
+        ref = footprint_reference(block) or ""
+        pieces.append(text[last:start])
+        if ref not in keep:
+            block = block.replace("\n\t\t(locked yes)", "", 1)
+        pieces.append(block)
+        last = end
+    pieces.append(text[last:])
+    return "".join(pieces)
+
+
 def set_footprint_at(block: str, x: float, y: float, rot: float) -> str:
     m = re.search(r"\n\t\t\(at [0-9.+-]+ [0-9.+-]+(?: [0-9.+-]+)?\)", block)
     new = f"\n\t\t(at {x:.4f} {y:.4f} {rot:g})"
@@ -71,9 +91,23 @@ def cluster_sensitive(job: CompiledJob, text: str) -> tuple[str, list[dict]]:
             for ref, px, py in sites:
                 if ref in locked:
                     continue
+                if ref[:1] == "U":
+                    continue
                 targets.append((ref, cap, name, tx, ty))
 
-    # Unique ref: use the tightest cap / first target
+    # Passives first so they vacate inductor slots; then magnetics.
+    def _rank(item: tuple) -> int:
+        ref, _cap, name, _tx, _ty = item
+        # Switch-node inductors first so BOOT caps do not steal the SW slot.
+        if name == "SW" and ref[:1] == "L":
+            return 0
+        if ref[:1] in "CR":
+            return 1
+        if ref[:1] == "L":
+            return 2
+        return 3
+
+    targets.sort(key=_rank)
     seen: set[str] = set()
     for ref, cap, name, tx, ty in targets:
         if ref in seen or ref not in blocks:
@@ -84,25 +118,46 @@ def cluster_sensitive(job: CompiledJob, text: str) -> tuple[str, list[dict]]:
         # pad offset from footprint origin — use first pad of this ref on this net
         pad = next(((x, y) for r, x, y in pads.get(name, []) if r == ref), (at[0], at[1]))
         dist = math.hypot(pad[0] - tx, pad[1] - ty)
-        want = min(5.0, max(2.0, cap * 0.5))
+        want = min(6.0, max(2.5, cap * 0.5))
         if dist <= want + 0.05:
             continue
-        scale = (dist - want) / dist if dist else 0
-        dx = (tx - pad[0]) * scale
-        dy = (ty - pad[1]) * scale
-        nx, ny, nrot = at[0] + dx, at[1] + dy, at[2]
-        trial = set_footprint_at(block, nx, ny, nrot)
-        trial_box = _aabb(trial, (nx, ny, nrot))
-        clash = False
-        for other, (_os, _oe, oblock) in blocks.items():
-            if other == ref:
-                continue
-            oat = new_pos.get(other) or footprint_at(oblock) or (0.0, 0.0, 0.0)
-            if _overlap(trial_box, _aabb(oblock if other not in new_pos else set_footprint_at(oblock, *oat), oat)):
-                clash = True
+
+        def _clashes(nx: float, ny: float, nrot: float, trial: str) -> bool:
+            trial_box = _aabb(trial, (nx, ny, nrot))
+            for other, (_os, _oe, oblock) in blocks.items():
+                if other == ref:
+                    continue
+                oat = new_pos.get(other) or footprint_at(oblock) or (0.0, 0.0, 0.0)
+                ob = oblock if other not in new_pos else set_footprint_at(oblock, *oat)
+                if _overlap(trial_box, _aabb(ob, oat)):
+                    return True
+            return False
+
+        chosen = None
+        radii = [want]
+        cap_r = float(cap)
+        r = want + 1.5
+        while r <= cap_r + 0.01:
+            radii.append(r)
+            r += 1.5
+        for rad in radii:
+            for ang in range(0, 360, 45):
+                a = math.radians(ang)
+                dpx = tx + rad * math.cos(a)
+                dpy = ty + rad * math.sin(a)
+                nx, ny, nrot = at[0] + (dpx - pad[0]), at[1] + (dpy - pad[1]), at[2]
+                bw, bh = job.board_size_mm
+                nx = min(max(nx, 3.0), bw - 3.0)
+                ny = min(max(ny, 3.0), bh - 3.0)
+                trial = set_footprint_at(block, nx, ny, nrot)
+                if not _clashes(nx, ny, nrot, trial):
+                    chosen = (nx, ny, nrot, trial)
+                    break
+            if chosen:
                 break
-        if clash:
+        if chosen is None:
             continue
+        nx, ny, nrot, trial = chosen
         new_pos[ref] = (nx, ny, nrot)
         blocks[ref] = (s, e, trial)
         moves.append({"ref": ref, "net": name, "from": [at[0], at[1]], "to": [nx, ny]})

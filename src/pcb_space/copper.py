@@ -12,6 +12,8 @@ from .stackup import ipc2221_width_mm
 
 _NET_DEF = re.compile(r'\(net\s+(\d+)\s+"([^"]*)"\)')
 _PAD_AT = re.compile(r"\(at\s+([0-9.+-]+)\s+([0-9.+-]+)(?:\s+([0-9.+-]+))?\)")
+_PAD_SIZE = re.compile(r"\(size\s+([0-9.+-]+)\s+([0-9.+-]+)\)")
+_PAD_LAYERS = re.compile(r"\(layers\s+([^)]+)\)")
 _WIDTH = re.compile(r"\(width\s+([0-9.+-]+)\)")
 
 
@@ -135,8 +137,90 @@ def _match(name: str, patterns: tuple[str, ...] | list[str]) -> bool:
     return any(fnmatch.fnmatch(name, pat) for pat in patterns)
 
 
+def _cu_layers(raw: str) -> set[str]:
+    toks = re.findall(r'"([^"]+)"|[A-Za-z0-9_.*]+', raw)
+    out: set[str] = set()
+    for t in toks:
+        if t == "*.Cu":
+            out.update({"F.Cu", "B.Cu", "In1.Cu", "In2.Cu"})
+        elif t.endswith(".Cu"):
+            out.add(t)
+    return out
+
+
+def _pad_aabb(
+    x: float, y: float, sx: float, sy: float, rot: float
+) -> tuple[float, float, float, float]:
+    hx, hy = sx / 2, sy / 2
+    xs, ys = [], []
+    for px, py in ((-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)):
+        wx, wy = _rotate(px, py, rot)
+        xs.append(x + wx)
+        ys.append(y + wy)
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _aabb_gap(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    dx = max(0.0, a[0] - b[2], b[0] - a[2])
+    dy = max(0.0, a[1] - b[3], b[1] - a[3])
+    if dx and dy:
+        return math.hypot(dx, dy)
+    return dx + dy
+
+
+def pad_clearance_failures(text: str, clearance: float = 0.16) -> list[str]:
+    """Different-net pads on a shared copper layer closer than *clearance*.
+
+    Same-footprint pairs are skipped (KiCad AABB false shorts on a rotated
+    module). This is the placement pad-pad gate: NTC on a Teensy pin row
+    must fail even when CSS locks still match.
+    """
+    names = net_table(text)
+    recs: list[tuple[str, str, str, tuple[float, float, float, float], set[str]]] = []
+    for start, end in board_footprint_spans(text):
+        block = text[start:end]
+        ref = footprint_reference(block) or "?"
+        at = footprint_at(block) or (0.0, 0.0, 0.0)
+        fx, fy, frot = at
+        pos = 0
+        while True:
+            j = block.find("(pad ", pos)
+            if j < 0:
+                break
+            k = matching_paren(block, j)
+            pad = block[j : k + 1]
+            pos = k + 1
+            net = _net_name_of(pad, names)
+            am = _PAD_AT.search(pad)
+            sm = _PAD_SIZE.search(pad)
+            lm = _PAD_LAYERS.search(pad)
+            if not net or net.startswith("unconnected-") or not am or not sm:
+                continue
+            px, py = float(am.group(1)), float(am.group(2))
+            prot = float(am.group(3) or 0)
+            lx, ly = _rotate(px, py, frot)
+            box = _pad_aabb(fx + lx, fy + ly, float(sm.group(1)), float(sm.group(2)), frot + prot)
+            layers = _cu_layers(lm.group(1) if lm else "")
+            recs.append((ref, net, pad[5:20], box, layers or {"F.Cu"}))
+    fails: list[str] = []
+    for i, (r1, n1, _p1, a, la) in enumerate(recs):
+        for r2, n2, _p2, b, lb in recs[i + 1 :]:
+            if r1 == r2 or n1 == n2:
+                continue
+            if not (la & lb):
+                continue
+            gap = _aabb_gap(a, b)
+            if gap + 1e-9 < clearance:
+                fails.append(
+                    f"{r1} ({n1}) vs {r2} ({n2}) pad gap {gap:.3f} mm < {clearance:g} mm"
+                )
+    return fails
+
+
 def sensitive_airwire_failures(job: CompiledJob, text: str) -> list[str]:
     spans = airwire_span_mm(text)
+    pads = pads_by_net(text)
+    locked = {p.ref for p in job.places if p.locked}
     fails: list[str] = []
     for net in job.nets:
         if net.max_length_mm is None:
@@ -144,7 +228,16 @@ def sensitive_airwire_failures(job: CompiledJob, text: str) -> list[str]:
         for name, span in spans.items():
             if not _match(name, net.patterns):
                 continue
-            if span > float(net.max_length_mm) + 1e-6:
+            sites = pads.get(name) or []
+            anchors = [(x, y) for r, x, y in sites if r in locked]
+            if net.kind == "switch_node" and anchors:
+                span = 0.0
+                for _r, x, y in sites:
+                    span = max(
+                        span,
+                        min(math.hypot(x - ax, y - ay) for ax, ay in anchors),
+                    )
+            if span > float(net.max_length_mm) + 0.05:
                 fails.append(
                     f"{name} airwire {span:.1f} mm > max_mm {net.max_length_mm:g} "
                     f"({net.kind or net.class_name})"

@@ -200,11 +200,11 @@ Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI job `
 
 `refs` maps Zener instance names (`R_CC1`) to KiCad references (`R2`) via footprint `Path`.
 
-`check` fails if a locked part moved or a named keepout disappeared.
+`check` fails if a locked part moved, a named keepout disappeared, an analog/SW airwire exceeds `NetReq max_mm`, or different-net pads sit closer than the copper floor (0.10 mm 2-layer / 0.16 mm 4-layer). That last gate is how NTC-on-Teensy pin-row shorts fail place, not only KRT.
 
-`route` picks the `placed/` board when it exists, refreshes net classes, routes USB pairs (`route_diff`), then signals, then on 2-layer pours GND last and finalizes. Analog / switch-node nets stay in `skip_autoroute`. Output is `routed/layout.kicad_pcb`. `--script-only` writes the plan without running it. Set `KRT_HOME` if the router is not in `~/Downloads/KiCadRoutingTools`. True 90 Ω USB needs 4-layer; 1.6 mm 2-layer is a tightly-coupled fab-floor pair, not 90 Ω.
+`route` picks the `placed/` board when it exists, refreshes net classes, routes USB pairs (`route_diff`), then signals. Analog / switch-node nets get an F.Cu-only pass (`--via-cost 100000`) then stay out of the maze. Every maze / plane step passes `--same-net-pad-clearance` (no via-in-pad on 0603s) and compiled `--via-size/--via-drill` (0.45/0.20). USB-C `qfn_fanout --allow-via-in-pad` is the exception (0.25/0.15 underpad). 4-layer boards with a GND plane get a keep-input-copper GND tap pass so HTSSOP PGND pins dog-bone instead of via-in-pad. 2-layer pours GND last and finalizes. Output is `routed/layout.kicad_pcb`. `--script-only` writes the plan without running it. Set `KRT_HOME` if the router is not in `~/Downloads/KiCadRoutingTools`. True 90 Ω USB needs 4-layer; 1.6 mm 2-layer is a tightly-coupled fab-floor pair, not 90 Ω.
 
-`fab` picks `routed/` when it exists, inserts three F.Cu fiducials, writes JLCPCB `bom.csv` / `cpl.csv` (LCSC from `SOURCE.json`; CPL from footprint positions, Y negated like KiCad POS), Gerbers, drill, and `FAB_NOTES.md` (via-in-pad). It does not upload. Copper `kicad-cli` DRC errors fail the command. KiCad 10 is required for DRC/Gerbers.
+`fab` picks `routed/` when it exists, inserts three F.Cu fiducials (skips a corner whose courtyard is occupied), writes JLCPCB `bom.csv` / `cpl.csv` (LCSC from `SOURCE.json`; through-hole without LCSC omitted as hand-solder; grouped designators quoted), Gerbers, drill, and `FAB_NOTES.md`. Via-in-pad on passives or connector mounting pegs **fails**. USB-C underpad is named, not a Standard-fab fail. Copper `kicad-cli` DRC errors fail the command (2-layer floor 0.10 mm, 4-layer JLCPCB 0.127 mm). It does not upload. KiCad 10 is required for DRC/Gerbers.
 
 ## What this is not
 

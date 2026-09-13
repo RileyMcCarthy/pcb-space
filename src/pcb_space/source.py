@@ -309,7 +309,8 @@ def import_part(
     if footprint:
         footprint = Path(footprint)
         copied = pkg / footprint.name
-        shutil.copy2(footprint, copied)
+        if footprint.resolve() != copied.resolve():
+            shutil.copy2(footprint, copied)
         rec.footprint = copied.name
         rec.cad_origin = "kicad-lib"
         rec.gates = check_footprint(copied, body_mm=rec.body_mm)

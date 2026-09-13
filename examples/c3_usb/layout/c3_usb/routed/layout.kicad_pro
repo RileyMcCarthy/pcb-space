@@ -432,6 +432,7 @@
       "min_track_width": 0.09,
       "min_via_annular_width": 0.1,
       "min_via_diameter": 0.25
-    }
+    },
+    "same_net_pad_clearance": 0.1
   }
 }

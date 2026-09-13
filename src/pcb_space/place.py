@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .apply import apply_job
 from .check import check_job
-from .cluster import cluster_sensitive
+from .cluster import cluster_sensitive, release_engine_locks
 from .compile import CompiledJob
 from .intent import intent_from_job
 from .project import packed_reason
@@ -117,9 +117,9 @@ def place_job(
             if s.exists() and not d.exists():
                 shutil.copy2(s, d)
         result["silk"] = silk_job(job, out, backup=False)
-        clustered, moves = cluster_sensitive(job, out.read_text())
-        if moves:
-            out.write_text(clustered)
+        placed_text = release_engine_locks(job, out.read_text(), aliases)
+        clustered, moves = cluster_sensitive(job, placed_text)
+        out.write_text(clustered if moves else placed_text)
         result["cluster"] = moves
         placed_fail = check_job(job, out)
         result["check"] = placed_fail

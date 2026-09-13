@@ -232,17 +232,9 @@ def compile_design(design: Design) -> CompiledJob:
                     ),
                 )
             )
-        if req.max_mm is not None:
-            dru.append(
-                DruRule(
-                    name=f"{cls_name.lower()}_max_length",
-                    constraint=(
-                        f"(constraint length (min 0mm) (opt {req.max_mm * 0.5:.1f}mm) "
-                        f"(max {req.max_mm}mm))"
-                    ),
-                    condition=f"A.NetClass == '{cls_name}'",
-                )
-            )
+        # max_mm is an airwire / cluster budget (pcb-space check). Do not
+        # emit a KiCad length rule: the maze path is longer than the
+        # airwire, and Analog nets with different max_mm share one class.
         if dp_g is not None:
             dru.append(
                 DruRule(
