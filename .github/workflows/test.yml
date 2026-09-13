@@ -25,7 +25,6 @@ jobs:
         run: |
           # Ubuntu 24.04 ships KiCad 7.0.11, which cannot load this repo's
           # boards (kicad_pcb version 20260206 / generator_version 10.0).
-          # Empty POS → "BOM refs missing from CPL". Use the KiCad 10 PPA.
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends software-properties-common
           sudo add-apt-repository -y ppa:kicad/kicad-10.0-releases
@@ -34,10 +33,11 @@ jobs:
           kicad-cli version
           kicad-cli version | grep -q '^10\.' || { echo "need KiCad 10.x"; exit 1; }
       - run: pip install -e ".[dev]"
-      - name: c3_usb tests including fab
-        run: pytest -q tests/test_c3_usb.py --tb=short
+      - name: All tests (kicad-cli required, no skips)
+        run: pytest -q --tb=short
         env:
           KRT_HOME: ""
+          PCBSPACE_REQUIRE_KICAD: "1"
       - name: Produce JLC package
         run: pcb-space fab examples/c3_usb/c3_usb.place.py -o "$RUNNER_TEMP/c3_usb_fab"
       - uses: actions/upload-artifact@v4

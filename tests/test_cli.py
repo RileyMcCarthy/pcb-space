@@ -1,8 +1,20 @@
 from pathlib import Path
 
+import pytest
+
 from pcb_space.cli import main
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_cli_help_lists_build(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "build" in out
+    assert "seed" in out
+    assert "status" in out
 
 
 def test_compile_cli_zero(capsys):
