@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import fnmatch
-import subprocess
 from pathlib import Path
 
 from .check import check_job
@@ -12,8 +11,8 @@ from .language import load_place_file
 from .project import (
     board_net_names,
     packed_reason,
-    pcb_cli,
     resolve_project,
+    zener_build,
 )
 from .refs import refs_report
 from .schematic import lint_zen, parse_zen_nets
@@ -28,27 +27,6 @@ def _file_info(path: Path | None) -> dict:
         info["packed"] = packed_reason(path, text) is not None
         info["packed_reason"] = packed_reason(path, text)
     return info
-
-
-def _pcb_build(zen: Path, root: Path) -> dict:
-    cli = pcb_cli()
-    from shutil import which
-
-    if not Path(cli).exists() and which("pcb") is None:
-        return {"ran": False, "ok": None, "detail": "pcb (Zener) not on PATH"}
-    proc = subprocess.run(
-        [str(cli), "build", str(zen)],
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-    )
-    out = ((proc.stdout or "") + (proc.stderr or "")).strip()
-    return {
-        "ran": True,
-        "ok": proc.returncode == 0,
-        "returncode": proc.returncode,
-        "detail": out[-1500:],
-    }
 
 
 def _best_pcb(proj) -> Path | None:
@@ -107,7 +85,7 @@ def status_job(path: Path) -> dict:
     if proj.zen and proj.zen.exists():
         lint = lint_zen(proj.zen.read_text())
     build = (
-        _pcb_build(proj.zen, proj.root)
+        zener_build(proj.zen, proj.root)
         if proj.zen and proj.zen.exists()
         else {"ran": False, "ok": None, "detail": "no .zen"}
     )

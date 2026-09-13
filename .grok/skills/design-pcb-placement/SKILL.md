@@ -29,7 +29,8 @@ that the engine will “make it fit”.
 ## 1. Seed footprints once
 
 ```bash
-pcb-space seed <board>.place.py
+pcb-space build <board>.place.py --upto seed
+# or: pcb-space seed <board>.place.py
 # wraps: pcb layout --no-open <board>.zen
 ```
 
@@ -69,9 +70,8 @@ Rejected: `z-index`, `flex`, `px`. `pcb layout` is not a CSS engine.
 ## 3. Place
 
 ```bash
-pcb-space place <board>.place.py
-pcb-space check <board>.place.py --pcb layout/<name>/placed/layout.kicad_pcb
-pcb-space refs  <board>.place.py --pcb layout/<name>/placed/layout.kicad_pcb
+pcb-space build <board>.place.py --upto place
+# or: pcb-space place / check / refs on the placed board
 ```
 
 `place` copies the seed into `placed/` (a second `.kicad_pro` beside the seed

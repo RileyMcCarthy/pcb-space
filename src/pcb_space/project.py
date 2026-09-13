@@ -29,6 +29,28 @@ def pcb_cli() -> Path:
     return home if home.exists() else Path("pcb")
 
 
+def zener_build(zen: Path, root: Path) -> dict:
+    """Run ``pcb build`` on a .zen. ``ok`` is False if pcb is missing."""
+    import subprocess
+
+    cli = pcb_cli()
+    if not Path(cli).exists() and shutil.which("pcb") is None:
+        return {"ran": False, "ok": False, "detail": "pcb (Zener) not on PATH"}
+    proc = subprocess.run(
+        [str(cli), "build", str(zen)],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+    )
+    out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    return {
+        "ran": True,
+        "ok": proc.returncode == 0,
+        "returncode": proc.returncode,
+        "detail": out[-1500:],
+    }
+
+
 def has_routed_copper(text: str) -> bool:
     if "\n\t(segment" in text or "\n  (segment" in text:
         return True

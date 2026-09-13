@@ -79,9 +79,8 @@ LDO: Cin/Cout from the datasheet; EN must not float.
 ## 5. Sign-off (all required)
 
 ```bash
-pcb build <board>.zen          # must print ✓
+pcb-space build <board>.place.py --upto schematic --from schematic
 pcb bom <board>.zen            # every row's MPN is one you imported
-pcb-space lint <board>.zen     # USB-C both orientations, CC Rd, ESP32 D+/D−
 pcb-space source check <ic-pkg> --body …   # every IC land
 ```
 
@@ -95,4 +94,4 @@ Pass only if:
 
 Fail (not “done”): `pcb dfm` errors with no outline, `pcb layout`, Gerbers, unpinned generics, EasyEDA land that failed body check.
 
-After sign-off, stop. Placement is `/design-pcb-placement`.
+After sign-off, stop. Placement is `/design-pcb-placement` (`pcb-space build --upto place`).

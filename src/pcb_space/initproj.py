@@ -25,8 +25,7 @@ ZEN = '''\
 # pcb-version = "0.4"
 # ```
 # Schematic is Zener. Source parts with `pcb-space source`, then:
-#   pcb build {name}.zen
-#   pcb-space seed {name}.place.py
+#   pcb-space build {name}.place.py
 # Do not run `pcb layout` on placed/, routed/, or fab/.
 
 VCC = Power("VCC")
@@ -40,7 +39,7 @@ Board(name = "{name}", layers = {layers}, layout_path = "layout/{name}")
 
 PLACE = '''\
 # Spatial half. Schematic is {name}.zen (Zener).
-# Seed once: pcb-space seed {name}.place.py
+# pcb-space build {name}.place.py
 # Never run `pcb layout` on placed/, routed/, or fab/.
 
 Board(
@@ -65,12 +64,9 @@ README_BOARD = """\
 Zener (`pcb`) is the schematic. pcb-space is the spatial compiler.
 
 ```bash
-pcb build {name}.zen
-pcb-space seed {name}.place.py          # wraps pcb layout --no-open; seed only
-pcb-space place {name}.place.py
-pcb-space check {name}.place.py --pcb layout/{name}/placed/layout.kicad_pcb
-pcb-space route {name}.place.py
-pcb-space fab {name}.place.py
+pcb-space build {name}.place.py
+# already fabbed: no-op. Rebuild copper: pcb-space build --force
+# stop early:     pcb-space build --upto place
 ```
 
 Do **not** run `pcb layout` on `placed/`, `routed/`, or `fab/`. That duplicates footprints.

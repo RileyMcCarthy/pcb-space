@@ -12,7 +12,9 @@ description: >
 Stop at a **local** fab folder an agent can zip. Do not upload to JLCPCB. Do
 not click Pcbnew. Wrap `kicad-cli` and `SOURCE.json`; do not rewrite KiCad.
 
-Tools: `pcb-space fab`. Exporter: `kicad-cli` (`/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli`). LCSC codes live in `components/**/SOURCE.json` — not in `pcb bom`. Worked example: `examples/c3_usb/`.
+Tools: `pcb-space build --upto fab` / `pcb-space fab`. Exporter: `kicad-cli`.
+LCSC codes live in `components/**/SOURCE.json` — not in `pcb bom`. Worked
+example: `examples/c3_usb/`.
 
 ## 0. Inputs
 
@@ -21,8 +23,9 @@ Routing sign-off from `/design-pcb-routing`: locks unmoved, `check_connected` fu
 ## 1. What the compiler writes
 
 ```bash
-pcb-space fab <board>.place.py
-# uses layout/<name>/routed/layout.kicad_pcb
+pcb-space build <board>.place.py --upto fab
+# uses committed routed/ if it exists (does not re-place / re-route)
+# or: pcb-space fab <board>.place.py
 # writes layout/<name>/fab/
 ```
 

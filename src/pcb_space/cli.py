@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .apply import apply_job
+from .build import STAGES, build_job
 from .check import check_job
 from .compile import compile_design
 from .initproj import init_job
@@ -244,6 +245,26 @@ def cmd_fab(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_build(args: argparse.Namespace) -> int:
+    try:
+        result = build_job(
+            Path(args.path),
+            upto=args.upto,
+            start_from=args.start_from,
+            force=args.force,
+            dry_run=args.dry_run,
+            krt_home=Path(args.krt_home) if args.krt_home else None,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    json.dump(result, sys.stdout, indent=2, default=str)
+    sys.stdout.write("\n")
+    if result.get("error"):
+        return 2
+    return 0
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     dest = Path(args.dir)
     name = args.name
@@ -370,6 +391,32 @@ def main(argv: list[str] | None = None) -> int:
         description="Zener schematic, then place/route/fab in front of KiCad.",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    bld = sub.add_parser(
+        "build",
+        help="schematic → seed → place → route → fab (skips finished stages)",
+    )
+    bld.add_argument("path", nargs="?", default=".", help=".place.py, .zen, or project directory")
+    bld.add_argument(
+        "--upto",
+        choices=STAGES,
+        default="fab",
+        help="Stop after this stage (default fab)",
+    )
+    bld.add_argument(
+        "--from",
+        dest="start_from",
+        choices=STAGES,
+        help="Rebuild from this stage (new copper from here)",
+    )
+    bld.add_argument(
+        "--force",
+        action="store_true",
+        help="Rebuild from schematic through --upto (new PCBA)",
+    )
+    bld.add_argument("--dry-run", action="store_true", help="Print the plan, do not run")
+    bld.add_argument("--krt-home")
+    bld.set_defaults(func=cmd_build)
 
     ini = sub.add_parser("init", help="Write pcb.toml, .zen, and .place.py")
     ini.add_argument("name", nargs="?", help="Board name (default: directory name)")

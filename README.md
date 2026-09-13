@@ -2,29 +2,17 @@
 
 **Zener (`pcb`) is the schematic language. pcb-space is the spatial compiler and fab packager in front of KiCad.**
 
-This is not a Zener fork and not a schematic tool. You write a `.zen` board, `pcb build` it, and `pcb-space seed` wraps `pcb layout --no-open` to drop unique footprints. pcb-space then places, routes, silks, and writes JLCPCB files. The agent never has to click Pcbnew.
+This is not a Zener fork. You write a `.zen` board and a `.place.py`. **`pcb-space build` is the compiler:** schematic (`pcb build` + lint) → seed (`pcb layout --no-open`) → place → route → fab. The agent never has to click Pcbnew.
 
 ```
 pcb-space source   MPN / LCSC → Zener package + SOURCE.json
       ↓
-.zen               Zener: Net / Module / pcb build
+.zen + .place.py   intent (Zener nets, CSS locks, NetReq)
       ↓
-pcb-space seed     pcb layout --no-open   (seed only — never placed/)
-      ↓
-.place.py          Place() + NetReq()     (git, AI-writable)
-      ↓ compile
-geometry           width / gap / clearance / layers / skip-autoroute
-      ↓ place
-placed/            outline, locked CSS poses, KRT-legalized free parts
-      ↓ check / refs
-intent tests       “USB-C still on the south edge”
-      ↓ route
-routed/            KRT (USB pair, signals, 2-layer GND last)
-      ↓ fab
-fab/               Gerbers, JLC BOM/CPL, fiducials
+pcb-space build    schematic → seed → place → route → fab
 ```
 
-`pcb layout` on `placed/`, `routed/`, or `fab/` duplicates footprints. `pcb-space seed` and `pcb-space place` refuse those directories.
+Already-committed `placed/` / `routed/` / `fab/` are left alone. `--force` or `--from place` is an opt-in rebuild (a new PCBA). `pcb layout` on those directories duplicates footprints; `seed` / `place` / `build` refuse them.
 
 ## Getting started
 
@@ -44,23 +32,19 @@ pip install -e ".[dev]"          # this repo
 export KRT_HOME=~/Downloads/KiCadRoutingTools
 
 pcb-space init blinky -C ./blinky
-# then source parts, write the .zen, then:
-pcb build blinky.zen
-pcb-space seed blinky.place.py
-pcb-space place blinky.place.py
-pcb-space check blinky.place.py --pcb layout/blinky/placed/layout.kicad_pcb
-pcb-space route blinky.place.py
-pcb-space fab blinky.place.py
+# source parts, write the .zen and Place() locks, then:
+pcb-space build blinky.place.py
 pcb-space status blinky.place.py
 ```
 
-Worked PCBA (already seeded/placed/routed in git):
+`--upto schematic|seed|place|route|fab` stops early. `--dry-run` prints the plan. `--force` rebuilds from schematic (new copper).
+
+Worked PCBA (already fabbed in git — `build` is a no-op until `--force`):
 
 ```bash
-pcb-space lint    examples/c3_usb/c3_usb.zen
-pcb-space refs    examples/c3_usb/c3_usb.place.py
+pcb-space build   examples/c3_usb --dry-run
 pcb-space status  examples/c3_usb
-pcb-space check   examples/c3_usb/c3_usb.place.py --pcb examples/c3_usb/layout/c3_usb/placed/layout.kicad_pcb
+pcb-space lint    examples/c3_usb/c3_usb.zen
 ```
 
 ## Why this exists
@@ -184,6 +168,8 @@ Worked example: `examples/c3_usb/` (USB-C ESP32-C3 node). EasyEDA’s ESP32 land
 
 ```bash
 pcb-space init    blinky -C ./blinky
+pcb-space build   examples/c3_usb --dry-run
+pcb-space build   blinky.place.py --upto place
 pcb-space lint    examples/c3_usb/c3_usb.zen
 pcb-space seed    examples/c3_usb/c3_usb.place.py   # pcb layout --no-open; seed only
 pcb-space status  examples/c3_usb
@@ -203,6 +189,8 @@ pcb-space source  search "100nF 0402"
 Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI runs the unit tests, then `pcb-space fab` on the committed routed board so Gerbers / JLC BOM / CPL are produced without clicking Pcbnew. The fab job installs KiCad 10 from the KiCad PPA (Ubuntu’s `kicad` package is 7.x and cannot load these boards). Full re-place / re-route needs `KRT_HOME` and is not run on GitHub Actions.
 
 `apply` locks `Place(..., locked=True)` footprints, writes the `Edge.Cuts` outline from `Board` size when the seed has none, writes net classes into the sibling `.kicad_pro`, writes `.kicad_dru`, and inserts keepout zones. It copies the board to `*.kicad_pcb.bak-pcbspace` first.
+
+`build` is the unified compiler. It skips stages that already have artifacts so a committed `routed/` board is what you order. `--force` / `--from` rebuilds on purpose and writes `layout/<name>/pcbspace.lock.json` (pcb-space, `pcb`, kicad-cli, KRT).
 
 `seed` runs `pcb layout --no-open` on the sibling `.zen` and refuses if the target is under `placed/`, `routed/`, or `fab/`, or already has copper.
 
@@ -227,7 +215,7 @@ Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI runs 
 
 ## Status
 
-v0.4: Zener is required (`pcb build` / `pcb-space seed`). `init`, `status`, `seed`, `refs`, `lint`, `nets`. `source search|import|check`; CSS locks; `place` / `route` / `silk` / `fab` / `review`. CI installs KiCad 10 and produces the c3_usb JLC package.
+v0.4: `pcb-space build` is the compiler (schematic → seed → place → route → fab). Zener is required for the netlist. `init`, `status`, `seed`, `refs`, `lint`, `nets`. CSS locks; `place` / `route` / `silk` / `fab` / `review`. CI fabs the committed routed board (does not re-place).
 
 ## License
 

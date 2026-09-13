@@ -13,8 +13,9 @@ Stop at copper that `check_connected` and copper `check_drc` can grade. Do not
 open Pcbnew. Do not Gerber. Do not rewrite KiCadRoutingTools' `/plan-pcb-routing`
 skill — wrap it.
 
-Tools: `pcb-space route`. Engine: KRT (`KRT_HOME`). Input is the **placed**
-board from `/design-pcb-placement`. Worked example: `examples/c3_usb/`.
+Tools: `pcb-space build --upto route` / `pcb-space route`. Engine: KRT (`KRT_HOME`).
+Input is the **placed** board from `/design-pcb-placement`. Worked example:
+`examples/c3_usb/`.
 `pcb-space status` should say `placed` (or `routed` after this skill). Do not
 run `pcb layout` on `placed/`.
 
@@ -34,9 +35,10 @@ run `pcb layout` on `placed/`.
 ## 2. Run
 
 ```bash
-pcb-space route <board>.place.py
+pcb-space build <board>.place.py --upto route
 # uses layout/<name>/placed/layout.kicad_pcb when it exists
 # writes layout/<name>/routed/layout.kicad_pcb
+# already routed: no-op unless --from route (new copper)
 ```
 
 `--script-only` writes `routed/pcbspace_route.sh` without running.
