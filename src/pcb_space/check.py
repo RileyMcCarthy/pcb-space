@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dataclasses import replace
+
 from .compile import CompiledJob
+from .layout import footprints_by_ref, resolve_place, resolve_regions
+from .model import BoardSpec
+from .refs import build_alias_index, resolve_ref
 from .sexp import board_footprint_spans, footprint_at, footprint_reference
 
 
@@ -27,21 +32,42 @@ def check_job(job: CompiledJob, pcb_path: Path, tol_mm: float = 0.05) -> list[st
         if ref:
             by_ref[ref] = block
 
+    board = BoardSpec(
+        size_mm=job.board_size_mm,
+        padding=job.padding,
+        layers=job.layers,
+        stackup=job.stackup,
+        pcb=job.pcb,
+        planes=job.planes,
+    )
+    regions = resolve_regions(board, job.regions)
+    fps = footprints_by_ref(text)
+    aliases = build_alias_index(text)
+
     for place in job.places:
-        block = by_ref.get(place.ref)
+        kref = resolve_ref(place.ref, aliases) or place.ref
+        block = by_ref.get(kref)
         if block is None:
             failures.append(f"missing footprint {place.ref}")
+            continue
+        bound = replace(place, ref=kref)
+        want = resolve_place(bound, board, fps.get(kref), regions)
+        if want.at is None:
             continue
         at = footprint_at(block)
         if at is None:
             failures.append(f"{place.ref} has no (at …)")
             continue
-        dx = abs(at[0] - place.at[0])
-        dy = abs(at[1] - place.at[1])
+        dx = abs(at[0] - want.at[0])
+        dy = abs(at[1] - want.at[1])
         if dx > tol_mm or dy > tol_mm:
             failures.append(
                 f"{place.ref} moved: have ({at[0]:.3f},{at[1]:.3f}) "
-                f"want ({place.at[0]:.3f},{place.at[1]:.3f})"
+                f"want ({want.at[0]:.3f},{want.at[1]:.3f})"
+            )
+        if abs((at[2] or 0) - want.rot) > 0.5:
+            failures.append(
+                f"{place.ref} rotated: have {at[2]:g} want {want.rot:g}"
             )
         if place.locked and "(locked yes)" not in block and "locked)" not in block:
             failures.append(f"{place.ref} is not locked")

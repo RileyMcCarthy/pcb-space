@@ -1,0 +1,31 @@
+"""Sourced by pcb-space. Pin names come from the CAD library,
+not a datasheet lock — check SOURCE.json gates before trusting.
+LCSC C2687116 / SOT-23-6
+"""
+
+I_O1 = io(Net(), optional=True)
+GND = io(Ground())
+I_O2 = io(Net(), optional=True)
+VBUS = io(Power())
+
+Component(
+    name = "USBLC6_2SC6",
+    footprint = File("SOT-23-6.kicad_mod"),
+    symbol = Symbol(
+        name = "USBLC6_2SC6",
+        definition = [
+            ("I_O1", ["1", "6"]),
+            ("GND", ["2"]),
+            ("I_O2", ["3", "4"]),
+            ("VBUS", ["5"]),
+        ],
+    ),
+    part = Part(mpn = "USBLC6-2SC6", manufacturer = "ST"),
+    datasheet = "https://www.lcsc.com/datasheet/C2687116.pdf",
+    pins = {
+        "I_O1": I_O1,
+        "GND": GND,
+        "I_O2": I_O2,
+        "VBUS": VBUS,
+    },
+)

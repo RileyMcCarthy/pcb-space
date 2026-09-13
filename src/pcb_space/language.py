@@ -1,10 +1,23 @@
-"""Place-file DSL. A .place.py is ordinary Python that calls these constructors."""
+"""Place-file DSL. A .place.py is ordinary Python that calls these constructors.
+
+Placement uses CSS names: position, top/right/bottom/left, margin, padding.
+Unitless numbers are millimetres. ``at=(x, y)`` is still the CAD escape hatch
+(KiCad footprint origin).
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from .model import BoardSpec, Design, KeepoutSpec, NetReqSpec, PlaceSpec
+from .css import (
+    AUTO,
+    BoxStyle,
+    apply_style_to_spec,
+    box_style_from_kwargs,
+    expand_shorthand,
+    parse_length,
+)
+from .model import BoardSpec, Design, KeepoutSpec, NetReqSpec, PlaceSpec, RegionSpec
 
 _current: Design | None = None
 
@@ -21,56 +34,163 @@ def reset() -> None:
     _current = Design()
 
 
+def _padding4(padding) -> tuple[float, float, float, float]:
+    t, r, b, l = expand_shorthand(padding if padding is not None else 0)
+    return (
+        float(parse_length(t) or 0),
+        float(parse_length(r) or 0),
+        float(parse_length(b) or 0),
+        float(parse_length(l) or 0),
+    )
+
+
 def Board(
-    size_mm: tuple[float, float],
+    size_mm: tuple[float, float] | None = None,
+    *,
+    width: float | None = None,
+    height: float | None = None,
     layers: int = 4,
     stackup: str = "jlcpcb_4l_1oz",
     pcb: str | None = None,
     planes: list[tuple[str, str]] | None = None,
+    padding: object = 0,
 ) -> BoardSpec:
+    if size_mm is not None:
+        w, h = float(size_mm[0]), float(size_mm[1])
+    elif width is not None and height is not None:
+        w, h = float(width), float(height)
+    else:
+        raise ValueError("Board needs size_mm=(w, h) or width= and height= (mm)")
     spec = BoardSpec(
-        size_mm=(float(size_mm[0]), float(size_mm[1])),
+        size_mm=(w, h),
         layers=int(layers),
         stackup=stackup,
         pcb=pcb,
         planes=tuple((str(n), str(l)) for n, l in (planes or ())),
+        padding=_padding4(padding),
     )
     _doc().board = spec
     return spec
 
 
+def _style(who: str, **kwargs) -> BoxStyle:
+    return box_style_from_kwargs(who=who, **kwargs)
+
+
 def Place(
     ref: str,
-    at: tuple[float, float],
-    rot: float = 0,
+    at: tuple[float, float] | None = None,
+    rot: float | None = None,
+    rotate: float | None = None,
     side: str = "F",
     locked: bool = False,
     reason: str = "",
+    position: str | None = None,
+    style: str | None = None,
+    parent: str | None = None,
+    box: str | None = None,
+    transform: str | None = None,
+    **css,
 ) -> PlaceSpec:
+    who = f"Place({ref!r})"
+    if "padding" in css or "padding_top" in css:
+        raise ValueError(
+            f"{who}: padding belongs on Board or Region, not a footprint "
+            "(footprints have intrinsic courtyard size). Use margin."
+        )
+    if css.get("width") is not None or css.get("height") is not None:
+        raise ValueError(
+            f"{who}: width/height belong on Region or Keepout. "
+            "A footprint's size is its courtyard."
+        )
+    rot_v = rotate if rotate is not None else (rot if rot is not None else 0.0)
+    st = _style(
+        who,
+        style=style,
+        position=position,
+        rotate=rot_v,
+        transform=transform,
+        box=box,
+        parent=parent,
+        **css,
+    )
+    if at is not None and st.has_insets():
+        raise ValueError(
+            f"{who}: use at=(x, y) OR left/top/right/bottom, not both. "
+            "at= is the KiCad origin (CAD apertures). CSS names the edges."
+        )
     spec = PlaceSpec(
         ref=str(ref),
-        at=(float(at[0]), float(at[1])),
-        rot=float(rot),
+        at=(float(at[0]), float(at[1])) if at is not None else None,
+        rot=float(st.rotate),
         side=side.upper()[:1],
         locked=bool(locked),
         reason=reason,
     )
+    spec = apply_style_to_spec(spec, st)
+    spec.rot = float(st.rotate)
+    if at is not None:
+        spec.position = "absolute"
+        spec.from_box = "origin"
+        spec.left = at[0]
+        spec.top = at[1]
+    elif st.is_absolute():
+        spec.position = "absolute"
+    if spec.locked and spec.at is None and not spec.has_css():
+        raise ValueError(
+            f"{who}: locked=True needs at=(x, y) or CSS top/right/bottom/left."
+        )
     _doc().places.append(spec)
     return spec
 
 
 def Keepout(
     name: str,
-    box: tuple[float, float, float, float],
+    box: tuple[float, float, float, float] | None = None,
     no: list[str] | tuple[str, ...] = ("copper", "via"),
+    position: str | None = None,
+    style: str | None = None,
+    parent: str | None = None,
+    **css,
 ) -> KeepoutSpec:
-    x0, y0, x1, y1 = (float(x) for x in box)
+    who = f"Keepout({name!r})"
+    st = _style(who, style=style, position=position or "absolute", parent=parent, **css)
+    if box is None and not st.has_insets():
+        raise ValueError(
+            f"{who}: needs box=(x0,y0,x1,y1) or CSS left/top/width/height."
+        )
     spec = KeepoutSpec(
         name=str(name),
-        box=(x0, y0, x1, y1),
+        box=(tuple(float(x) for x in box) if box is not None else None),  # type: ignore[arg-type]
         no=tuple(no),
     )
+    spec = apply_style_to_spec(spec, st)
+    if spec.box is not None:
+        spec.box = (float(spec.box[0]), float(spec.box[1]), float(spec.box[2]), float(spec.box[3]))
     _doc().keepouts.append(spec)
+    return spec
+
+
+def Region(
+    name: str,
+    position: str | None = None,
+    style: str | None = None,
+    parent: str | None = None,
+    padding: object | None = None,
+    **css,
+) -> RegionSpec:
+    who = f"Region({name!r})"
+    if padding is not None:
+        css = {**css, "padding": padding}
+    st = _style(who, style=style, position=position or "absolute", parent=parent, **css)
+    if not st.has_insets():
+        raise ValueError(
+            f"{who}: needs CSS left/top/right/bottom/width/height "
+            "(a containing block has to have a box)."
+        )
+    spec = RegionSpec(name=str(name))
+    spec = apply_style_to_spec(spec, st)
+    _doc().regions.append(spec)
     return spec
 
 
@@ -108,7 +228,9 @@ def load_place_file(path: str | Path) -> Design:
         "Board": Board,
         "Place": Place,
         "Keepout": Keepout,
+        "Region": Region,
         "NetReq": NetReq,
+        "AUTO": AUTO,
         "__file__": str(path),
         "__name__": "__pcb_space__",
     }

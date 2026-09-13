@@ -1,23 +1,45 @@
 # Forma Pod — mechanical locks + electrical intent.
-# KiCad refs are from the generated layout (U26 = USB-C, U28 = FFC, …).
+# CSS names for edges and keepouts. at=(x, y) is the CAD aperture (KiCad origin).
 
 Board(
-    size_mm=(52, 30),
+    width=52,
+    height=30,
     layers=4,
     stackup="jlcpcb_4l_1oz",
     pcb="layout/forma_pod/layout.kicad_pcb",
     planes=[("AGND", "In1.Cu"), ("DGND", "In2.Cu")],
 )
 
-# Hardcoded for the enclosure / garment CAD. Auto-place must not move these.
-Place("U28", at=(26.0, 3.4), rot=0, locked=True, reason="FFC to garment")
-Place("U26", at=(47.2, 10.0), rot=90, locked=True, reason="USB-C at pod end")
-Place("U27", at=(5.0, 4.8), rot=0, locked=True, reason="JST battery")
-Place("U32", at=(26.0, 11.5), rot=0, side="B", locked=True, reason="PPG optical window")
-Place("NT1", at=(26.0, 14.8), rot=0, locked=True, reason="AGND/DGND star")
+# Enclosure CAD numbered these origins. Auto-place must not move them.
+Place("U26", at=(47.2, 10.0), rotate=90, locked=True, reason="USB-C at pod end")
+Place("U27", at=(5.0, 4.8), locked=True, reason="JST battery")
+Place("U28", at=(26.0, 3.4), locked=True, reason="FFC to garment")
+Place("U32", at=(26.0, 11.5), side="B", locked=True, reason="PPG optical window")
+Place("NT1", at=(26.0, 14.8), locked=True, reason="AGND/DGND star")
 
-Keepout("ANTENNA", box=(18.0, 27.2, 34.0, 30.0))
-Keepout("PPG_WINDOW", box=(23.5, 9.0, 28.5, 14.0))
+# Same boxes as before, written as CSS.
+Keepout(
+    "ANTENNA",
+    position="absolute",
+    bottom=0,
+    left=0,
+    right=0,
+    width=16,
+    height=2.8,
+    margin_left="auto",
+    margin_right="auto",
+)
+Keepout(
+    "PPG_WINDOW",
+    position="absolute",
+    top=9,
+    left=0,
+    right=0,
+    width=5,
+    height=5,
+    margin_left="auto",
+    margin_right="auto",
+)
 
 NetReq("USB_DP", "USB_DN", kind="usb_hs", z_diff_ohm=90, pair=True)
 NetReq("VBAT", "VBUS", "3V3", "5V_A", "1V8", "DGND", "AGND", kind="power", volts=3.3, amps=0.25)

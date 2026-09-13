@@ -9,11 +9,29 @@ from .apply import apply_job
 from .check import check_job
 from .compile import compile_design
 from .language import load_place_file
-from .route import krt_commands, render_script
+from .route import route_job
+from .fab import fab_job
+from .place import place_job
+from .review import review_job
+from .silk import silk_job
+from .source import check_footprint, import_part, parse_body_mm, search_parts
 
 
 def _job(place: Path):
     return compile_design(load_place_file(place))
+
+
+def _pcb_path(args: argparse.Namespace, job) -> Path:
+    raw = getattr(args, "pcb", None) or job.pcb or ""
+    if not raw:
+        return Path("")
+    p = Path(raw)
+    if p.exists():
+        return p.resolve()
+    alt = Path(args.place).resolve().parent / raw
+    if alt.exists():
+        return alt.resolve()
+    return p
 
 
 def cmd_compile(args: argparse.Namespace) -> int:
@@ -30,7 +48,7 @@ def cmd_compile(args: argparse.Namespace) -> int:
 
 def cmd_apply(args: argparse.Namespace) -> int:
     job = _job(Path(args.place))
-    pcb = Path(args.pcb or job.pcb or "")
+    pcb = _pcb_path(args, job)
     if not pcb:
         print("pass --pcb path/to/layout.kicad_pcb", file=sys.stderr)
         return 2
@@ -44,7 +62,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
 def cmd_check(args: argparse.Namespace) -> int:
     job = _job(Path(args.place))
-    pcb = Path(args.pcb or job.pcb or "")
+    pcb = _pcb_path(args, job)
     if not pcb:
         print("pass --pcb path/to/layout.kicad_pcb", file=sys.stderr)
         return 2
@@ -57,30 +75,196 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 1
 
 
-def cmd_route(args: argparse.Namespace) -> int:
+def cmd_source_search(args: argparse.Namespace) -> int:
+    data = search_parts(args.query, fab=args.fab, limit=args.limit)
+    json.dump(data, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    if data.get("errors"):
+        return 1
+    if not data.get("hits"):
+        return 1
+    return 0
+
+
+def cmd_source_import(args: argparse.Namespace) -> int:
+    result = import_part(
+        args.query,
+        Path(args.out),
+        kind=args.kind,
+        footprint=Path(args.footprint) if args.footprint else None,
+        body=args.body,
+        manufacturer=args.manufacturer or "",
+        fab=args.fab,
+    )
+    json.dump(result, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    rec = result["record"]
+    if rec.get("status") == "ok":
+        return 0
+    if rec.get("status") == "gate_failed":
+        return 1
+    return 2
+
+
+def cmd_source_check(args: argparse.Namespace) -> int:
+    body = parse_body_mm(args.body) if args.body else None
+    report = check_footprint(Path(args.path), body_mm=body, tol_mm=args.tol)
+    json.dump(report, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0 if report.get("ok") else 1
+
+
+def cmd_place(args: argparse.Namespace) -> int:
     job = _job(Path(args.place))
-    pcb = Path(args.pcb or job.pcb or "")
+    pcb = _pcb_path(args, job)
     if not pcb:
         print("pass --pcb path/to/layout.kicad_pcb", file=sys.stderr)
         return 2
-    cmds = krt_commands(job, pcb, Path(args.krt_home) if args.krt_home else None)
-    script = render_script(cmds)
-    out = Path(args.output) if args.output else pcb.parent / "pcbspace_route.sh"
-    out.write_text(script)
-    out.chmod(0o755)
-    print(out)
-    if args.run:
-        import subprocess
+    result = place_job(
+        job,
+        pcb,
+        krt_home=Path(args.krt_home) if args.krt_home else None,
+        out=Path(args.output) if args.output else None,
+        force=not args.no_force,
+    )
+    json.dump(result, sys.stdout, indent=2, default=str)
+    sys.stdout.write("\n")
+    if result.get("error"):
+        return 2
+    krt = result.get("krt") or {}
+    rc = krt.get("returncode")
+    if rc in (0, None):
+        return 0
+    if rc == 4:
+        return 0
+    return 1
 
-        r = subprocess.run(["bash", str(out)])
-        return r.returncode
+
+def _route_pcb_path(args: argparse.Namespace, job) -> Path:
+    pcb = _pcb_path(args, job)
+    if getattr(args, "pcb", None) or not pcb:
+        return pcb
+    placed = pcb.parent / "placed" / pcb.name
+    if placed.exists():
+        return placed
+    return pcb
+
+
+def _fab_pcb_path(args: argparse.Namespace, job) -> Path:
+    pcb = _pcb_path(args, job)
+    if getattr(args, "pcb", None) or not pcb:
+        return pcb
+    routed = pcb.parent / "routed" / pcb.name
+    if routed.exists():
+        return routed
+    placed = pcb.parent / "placed" / pcb.name
+    if placed.exists():
+        return placed
+    return pcb
+
+
+def _review_pcb_path(args: argparse.Namespace, job) -> Path:
+    pcb = _pcb_path(args, job)
+    if getattr(args, "pcb", None) or not pcb:
+        return pcb
+    fab = pcb.parent / "fab" / pcb.name
+    if fab.exists():
+        return fab
+    routed = pcb.parent / "routed" / pcb.name
+    if routed.exists():
+        return routed
+    placed = pcb.parent / "placed" / pcb.name
+    if placed.exists():
+        return placed
+    return pcb
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    job = _job(Path(args.place))
+    pcb = _review_pcb_path(args, job)
+    if not pcb:
+        print("pass --pcb path/to/routed/layout.kicad_pcb", file=sys.stderr)
+        return 2
+    result = review_job(
+        job,
+        pcb,
+        place=Path(args.place),
+        out_dir=Path(args.output) if args.output else None,
+        open_html=not args.no_open,
+    )
+    json.dump(result, sys.stdout, indent=2, default=str)
+    sys.stdout.write("\n")
+    if result.get("error"):
+        return 1
+    return 0
+
+
+def cmd_silk(args: argparse.Namespace) -> int:
+    job = _job(Path(args.place))
+    pcb = _review_pcb_path(args, job)
+    if not pcb:
+        print("pass --pcb path/to/layout.kicad_pcb", file=sys.stderr)
+        return 2
+    result = silk_job(
+        job,
+        pcb,
+        out=Path(args.output) if args.output else None,
+        backup=not args.no_backup,
+    )
+    json.dump(result, sys.stdout, indent=2, default=str)
+    sys.stdout.write("\n")
+    return 0
+
+
+def cmd_fab(args: argparse.Namespace) -> int:
+    job = _job(Path(args.place))
+    pcb = _fab_pcb_path(args, job)
+    if not pcb:
+        print("pass --pcb path/to/routed/layout.kicad_pcb", file=sys.stderr)
+        return 2
+    result = fab_job(
+        job,
+        pcb,
+        out_dir=Path(args.output) if args.output else None,
+        components=Path(args.components) if args.components else None,
+        insert_fids=not args.no_fiducials,
+    )
+    json.dump(result, sys.stdout, indent=2, default=str)
+    sys.stdout.write("\n")
+    if result.get("error"):
+        return 1
+    if result.get("drc_copper_errors"):
+        return 1
+    return 0
+
+
+def cmd_route(args: argparse.Namespace) -> int:
+    job = _job(Path(args.place))
+    pcb = _route_pcb_path(args, job)
+    if not pcb:
+        print("pass --pcb path/to/placed/layout.kicad_pcb", file=sys.stderr)
+        return 2
+    result = route_job(
+        job,
+        pcb,
+        krt_home=Path(args.krt_home) if args.krt_home else None,
+        out=Path(args.output) if args.output else None,
+        run=not args.script_only,
+    )
+    json.dump(result, sys.stdout, indent=2, default=str)
+    sys.stdout.write("\n")
+    if result.get("error"):
+        return 1
+    steps = result.get("steps") or []
+    if steps and steps[-1].get("returncode") not in (0, None):
+        return 1
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="pcb-space",
-        description="Compile Place/NetReq intent into KiCad geometry and engine jobs.",
+        description="Schematic sourcing, placement, and routing compiler in front of KiCad.",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -100,16 +284,78 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--pcb")
     k.set_defaults(func=cmd_check)
 
-    r = sub.add_parser("route", help="Write a KiCadRoutingTools plan script")
+    r = sub.add_parser("route", help="Route USB pairs then signals (KRT)")
     r.add_argument("place")
     r.add_argument("--pcb")
     r.add_argument("--krt-home")
     r.add_argument("-o", "--output")
-    r.add_argument("--run", action="store_true", help="Run the script after writing it")
+    r.add_argument("--script-only", action="store_true", help="Write the plan script, do not run it")
     r.set_defaults(func=cmd_route)
+
+    pl = sub.add_parser("place", help="Lock CSS poses and legalize unlocked parts (KRT)")
+    pl.add_argument("place")
+    pl.add_argument("--pcb")
+    pl.add_argument("--krt-home")
+    pl.add_argument("-o", "--output")
+    pl.add_argument("--no-force", action="store_true", help="Do not re-seed; only repair")
+    pl.set_defaults(func=cmd_place)
+
+    sk = sub.add_parser("silk", help="Legalize F.SilkS reference text (size + slots)")
+    sk.add_argument("place")
+    sk.add_argument("--pcb")
+    sk.add_argument("-o", "--output", help="Write a copy (default: edit the board in place)")
+    sk.add_argument("--no-backup", action="store_true")
+    sk.set_defaults(func=cmd_silk)
+
+    rv = sub.add_parser("review", help="HTML review: schematic, copper SVGs, 3D GLB")
+    rv.add_argument("place")
+    rv.add_argument("--pcb")
+    rv.add_argument("-o", "--output", help="Output directory (default: layout/.../review)")
+    rv.add_argument("--no-open", action="store_true", help="Write HTML but do not open a browser")
+    rv.set_defaults(func=cmd_review)
+
+    f = sub.add_parser("fab", help="JLCPCB package: Gerbers, drill, BOM, CPL, fab notes")
+    f.add_argument("place")
+    f.add_argument("--pcb")
+    f.add_argument("-o", "--output", help="Output directory (default: layout/.../fab)")
+    f.add_argument("--components", help="components/ dir with SOURCE.json")
+    f.add_argument("--no-fiducials", action="store_true")
+    f.set_defaults(func=cmd_fab)
+
+    s = sub.add_parser("source", help="Search distributors and attach symbols/footprints")
+    ss = s.add_subparsers(dest="source_cmd", required=True)
+
+    ssearch = ss.add_parser("search", help="Search LCSC (DigiKey/Mouser if keys are set)")
+    ssearch.add_argument("query")
+    ssearch.add_argument("--fab", default="jlcpcb", choices=("jlcpcb", "any"))
+    ssearch.add_argument("--limit", type=int, default=10)
+    ssearch.set_defaults(func=cmd_source_search)
+
+    simp = ss.add_parser("import", help="Write a Zener component package + SOURCE.json")
+    simp.add_argument("query")
+    simp.add_argument("-o", "--out", default="components")
+    simp.add_argument("--kind", default="auto", choices=("auto", "generic", "ic"))
+    simp.add_argument("--footprint", help="Existing .kicad_mod to copy into the package")
+    simp.add_argument("--body", help="Datasheet body LxW mm, e.g. 1.5x1.5")
+    simp.add_argument("--manufacturer", default="")
+    simp.add_argument("--fab", default="jlcpcb", choices=("jlcpcb", "any"))
+    simp.set_defaults(func=cmd_source_import)
+
+    schk = ss.add_parser("check", help="Fail if footprint body does not match datasheet")
+    schk.add_argument("path", help="Package dir, .zen, or .kicad_mod")
+    schk.add_argument("--body", help="Datasheet body LxW mm")
+    schk.add_argument("--tol", type=float, default=0.2)
+    schk.set_defaults(func=cmd_source_check)
 
     args = p.parse_args(argv)
     return args.func(args)
+
+
+def source_main(argv: list[str] | None = None) -> int:
+    """Entry point for the `pcb-source` alias."""
+    if argv is None:
+        argv = sys.argv[1:]
+    return main(["source", *argv])
 
 
 if __name__ == "__main__":

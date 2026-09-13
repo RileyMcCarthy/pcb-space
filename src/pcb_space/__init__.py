@@ -1,10 +1,10 @@
 """pcb-space: electrical/mechanical intent in, KiCad geometry out."""
 
 from .compile import CompiledJob, compile_design
-from .language import Board, Keepout, NetReq, Place, load_place_file
+from .language import Board, Keepout, NetReq, Place, Region, load_place_file
 from .model import BoardSpec, Design
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 __all__ = [
     "Board",
     "BoardSpec",
@@ -13,6 +13,7 @@ __all__ = [
     "Keepout",
     "NetReq",
     "Place",
+    "Region",
     "compile_design",
     "load_place_file",
 ]

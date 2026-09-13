@@ -1,0 +1,33 @@
+{
+  "mpn": "KT-0603R",
+  "manufacturer": "Kento",
+  "kind": "generic",
+  "package": "0603",
+  "body_mm": null,
+  "lcsc": "C2286",
+  "jlc_basic": true,
+  "stock": 8154450,
+  "datasheet": null,
+  "footprint": null,
+  "symbol": null,
+  "cad_origin": "stdlib-generic",
+  "status": "ok",
+  "gates": {
+    "ok": true,
+    "note": "generic: no unique CAD"
+  },
+  "vendors": [
+    {
+      "vendor": "lcsc",
+      "mpn": "KT-0603R",
+      "lcsc": "C2286",
+      "package": "0603",
+      "description": "-40\u2103~+85\u2103 1.8V~2.4V 120\u00b0 20mA 300mcd 40mW 615nm~630nm 645nm Discrete Diode Red Water Clear 0603 LED Indication - Discrete ROHS",
+      "stock": 8154450,
+      "price_usd": 0.0073,
+      "jlc_basic": true,
+      "jlc_preferred": false
+    }
+  ],
+  "pins": {}
+}

@@ -1,0 +1,197 @@
+# ```pcb
+# [workspace]
+# pcb-version = "0.4"
+# ```
+# USB-C 5 V in → AP2112 3.3 V → ESP32-C3-MINI-1-N4.
+# MPNs are the LCSC reels in components/*/SOURCE.json — do not let BOM auto-pick.
+
+Resistor = Module("@stdlib/generics/Resistor.zen")
+Capacitor = Module("@stdlib/generics/Capacitor.zen")
+Led = Module("@stdlib/generics/Led.zen")
+
+USBC = Module("./components/HRO/TYPE-C-31-M-12/TYPE-C-31-M-12.zen")
+LDO = Module("./components/Diodes_Inc/AP2112K-3.3TRG1/AP2112K-3.3TRG1.zen")
+ESP32 = Module("./components/Espressif/ESP32-C3-MINI-1-N4/ESP32-C3-MINI-1-N4.zen")
+Button = Module("./components/Omron/B3U-1000P/B3U-1000P.zen")
+ESD = Module("./components/ST/USBLC6-2SC6/USBLC6-2SC6.zen")
+
+VBUS = Power("VBUS")
+V3V3 = Power("3V3")
+GND = Ground("GND")
+USB_DP = Net("USB_DP")
+USB_DN = Net("USB_DN")
+EN = Net("EN")
+BOOT = Net("BOOT")
+LED = Net("LED")
+CC1 = Net("CC1")
+CC2 = Net("CC2")
+LED_A = Net("LED_A")
+
+USBC(
+    name = "J1",
+    VBUS = VBUS,
+    GND = GND,
+    EH = GND,
+    CC1 = CC1,
+    CC2 = CC2,
+    DP1 = USB_DP,
+    DP2 = USB_DP,
+    DN1 = USB_DN,
+    DN2 = USB_DN,
+)
+ESD(name = "U3", I_O1 = USB_DP, I_O2 = USB_DN, GND = GND, VBUS = VBUS)
+
+# Rd on CC — UFP / device (USB-C 5.1 kΩ)
+Resistor(
+    name = "R_CC1",
+    value = "5.1kohm",
+    package = "0402",
+    mpn = "0402WGF5101TCE",
+    manufacturer = "UniOhm",
+    P1 = CC1,
+    P2 = GND,
+)
+Resistor(
+    name = "R_CC2",
+    value = "5.1kohm",
+    package = "0402",
+    mpn = "0402WGF5101TCE",
+    manufacturer = "UniOhm",
+    P1 = CC2,
+    P2 = GND,
+)
+Capacitor(
+    name = "C_VBUS",
+    value = "10uF",
+    package = "0603",
+    voltage = "16V",
+    dielectric = "X5R",
+    mpn = "CL10A106KO8NQNC",
+    manufacturer = "Samsung",
+    P1 = VBUS,
+    P2 = GND,
+)
+Capacitor(
+    name = "C_VBUS_HF",
+    value = "100nF",
+    package = "0402",
+    voltage = "16V",
+    dielectric = "X7R",
+    mpn = "CL05B104KO5NNNC",
+    manufacturer = "Samsung",
+    P1 = VBUS,
+    P2 = GND,
+)
+
+LDO(name = "U2", VIN = VBUS, VOUT = V3V3, GND = GND)
+Capacitor(
+    name = "C_3V3",
+    value = "10uF",
+    package = "0603",
+    voltage = "10V",
+    dielectric = "X5R",
+    mpn = "CL10A106KP8NNNC",
+    manufacturer = "Samsung",
+    P1 = V3V3,
+    P2 = GND,
+)
+Capacitor(
+    name = "C_3V3_HF",
+    value = "100nF",
+    package = "0402",
+    voltage = "16V",
+    dielectric = "X7R",
+    mpn = "CL05B104KO5NNNC",
+    manufacturer = "Samsung",
+    P1 = V3V3,
+    P2 = GND,
+)
+
+# EN: 10 kΩ pull-up + 1 µF, RST shorts EN to GND
+Resistor(
+    name = "R_EN",
+    value = "10kohm",
+    package = "0402",
+    mpn = "0402WGF1002TCE",
+    manufacturer = "UniOhm",
+    P1 = V3V3,
+    P2 = EN,
+)
+Capacitor(
+    name = "C_EN",
+    value = "1uF",
+    package = "0402",
+    voltage = "25V",
+    dielectric = "X5R",
+    mpn = "CL05A105KA5NQNC",
+    manufacturer = "Samsung",
+    P1 = EN,
+    P2 = GND,
+)
+Button(name = "SW_RST", P1 = EN, P2 = GND)
+
+# GPIO9 is the download strap. Pull up; BOOT shorts to GND.
+Resistor(
+    name = "R_BOOT",
+    value = "10kohm",
+    package = "0402",
+    mpn = "0402WGF1002TCE",
+    manufacturer = "UniOhm",
+    P1 = V3V3,
+    P2 = BOOT,
+)
+Button(name = "SW_BOOT", P1 = BOOT, P2 = GND)
+
+ESP32(
+    name = "U1",
+    P3V3 = V3V3,
+    GND = GND,
+    EN = EN,
+    IO9 = BOOT,
+    IO10 = LED,
+    IO18 = USB_DN,
+    IO19 = USB_DP,
+)
+Capacitor(
+    name = "C_MCU",
+    value = "10uF",
+    package = "0603",
+    voltage = "10V",
+    dielectric = "X5R",
+    mpn = "CL10A106KP8NNNC",
+    manufacturer = "Samsung",
+    P1 = V3V3,
+    P2 = GND,
+)
+Capacitor(
+    name = "C_MCU_HF",
+    value = "100nF",
+    package = "0402",
+    voltage = "16V",
+    dielectric = "X7R",
+    mpn = "CL05B104KO5NNNC",
+    manufacturer = "Samsung",
+    P1 = V3V3,
+    P2 = GND,
+)
+
+Resistor(
+    name = "R_LED",
+    value = "1kohm",
+    package = "0402",
+    mpn = "0402WGF1001TCE",
+    manufacturer = "UniOhm",
+    P1 = LED,
+    P2 = LED_A,
+)
+Led(
+    name = "D1",
+    package = "0603",
+    color = "red",
+    mpn = "KT-0603R",
+    manufacturer = "Kento",
+    A = LED_A,
+    K = GND,
+)
+
+Board(name = "c3_usb", layers = 2, layout_path = "layout/c3_usb")

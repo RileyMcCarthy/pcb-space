@@ -1,0 +1,57 @@
+"""Sourced by pcb-space. Pin names come from the CAD library,
+not a datasheet lock — check SOURCE.json gates before trusting.
+LCSC C165948 / SMD
+"""
+
+GND = io(Ground())
+VBUS = io(Power())
+SBU2 = io(Net(), optional=True)
+CC1 = io(Net(), optional=True)
+DN2 = io(Net(), optional=True)
+DP1 = io(Net(), optional=True)
+DN1 = io(Net(), optional=True)
+DP2 = io(Net(), optional=True)
+SBU1 = io(Net(), optional=True)
+CC2 = io(Net(), optional=True)
+EH = io(Ground())
+
+Component(
+    name = "TYPE_C_31_M_12",
+    footprint = File("USB_C_Receptacle_HRO_TYPE-C-31-M-12.kicad_mod"),
+    symbol = Symbol(
+        name = "TYPE_C_31_M_12",
+        definition = [
+            ("GND", ["A1", "A12", "B1", "B12"]),
+            ("VBUS", ["A4", "A9", "B4", "B9"]),
+            ("SBU2", ["B8"]),
+            ("CC1", ["A5"]),
+            ("DN2", ["B7"]),
+            ("DP1", ["A6"]),
+            ("DN1", ["A7"]),
+            ("DP2", ["B6"]),
+            ("SBU1", ["A8"]),
+            ("CC2", ["B5"]),
+            ("EH", ["SH"]),
+        ],
+    ),
+    part = Part(
+        mpn = "TYPE-C-31-M-12",
+        manufacturer = "Korean Hroparts Elec",
+        datasheet = "https://lcsc.com/product-detail/USB-Type-C_Korean-Hroparts-Elec-TYPE-C-31-M-12_C165948.html",
+    ),
+    prefix = "J",
+    properties = {"lcsc": "C165948"},
+    pins = {
+        "GND": GND,
+        "VBUS": VBUS,
+        "SBU2": SBU2,
+        "CC1": CC1,
+        "DN2": DN2,
+        "DP1": DP1,
+        "DN1": DN1,
+        "DP2": DP2,
+        "SBU1": SBU1,
+        "CC2": CC2,
+        "EH": EH,
+    },
+)

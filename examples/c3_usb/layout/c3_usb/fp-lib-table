@@ -1,0 +1,11 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "stdlib_kicad-footprints_Capacitor_SMD") (type "KiCad") (uri "${KIPRJMOD}/../../.pcb/stdlib/kicad-footprints/Capacitor_SMD.pretty") (options "") (descr ""))
+  (lib (name "stdlib_kicad-footprints_LED_SMD") (type "KiCad") (uri "${KIPRJMOD}/../../.pcb/stdlib/kicad-footprints/LED_SMD.pretty") (options "") (descr ""))
+  (lib (name "stdlib_kicad-footprints_Resistor_SMD") (type "KiCad") (uri "${KIPRJMOD}/../../.pcb/stdlib/kicad-footprints/Resistor_SMD.pretty") (options "") (descr ""))
+  (lib (name "workspace_components_Diodes_Inc_AP2112K-3.3TRG1") (type "KiCad") (uri "${KIPRJMOD}/../../components/Diodes_Inc/AP2112K-3.3TRG1") (options "") (descr ""))
+  (lib (name "workspace_components_Espressif_ESP32-C3-MINI-1-N4") (type "KiCad") (uri "${KIPRJMOD}/../../components/Espressif/ESP32-C3-MINI-1-N4") (options "") (descr ""))
+  (lib (name "workspace_components_HRO_TYPE-C-31-M-12") (type "KiCad") (uri "${KIPRJMOD}/../../components/HRO/TYPE-C-31-M-12") (options "") (descr ""))
+  (lib (name "workspace_components_Omron_B3U-1000P") (type "KiCad") (uri "${KIPRJMOD}/../../components/Omron/B3U-1000P") (options "") (descr ""))
+  (lib (name "workspace_components_ST_USBLC6-2SC6") (type "KiCad") (uri "${KIPRJMOD}/../../components/ST/USBLC6-2SC6") (options "") (descr ""))
+)

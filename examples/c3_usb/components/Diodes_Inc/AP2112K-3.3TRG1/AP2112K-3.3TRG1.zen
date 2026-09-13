@@ -1,0 +1,35 @@
+"""Sourced by pcb-space. Pin names come from the CAD library,
+not a datasheet lock — check SOURCE.json gates before trusting.
+LCSC C51118 / SOT-25-5
+"""
+
+VIN = io(Power())
+GND = io(Ground())
+EN = io(Net(), optional=True)
+NC = io(Net(), optional=True)
+VOUT = io(Power())
+_en = EN if EN else VIN
+
+Component(
+    name = "AP2112K_33TRG1",
+    footprint = File("SOT-23-5.kicad_mod"),
+    symbol = Symbol(
+        name = "AP2112K_33TRG1",
+        definition = [
+            ("VIN", ["1"]),
+            ("GND", ["2"]),
+            ("EN", ["3"]),
+            ("NC", ["4"]),
+            ("VOUT", ["5"]),
+        ],
+    ),
+    part = Part(mpn = "AP2112K-3.3TRG1", manufacturer = "Diodes Inc"),
+    datasheet = "https://lcsc.com/product-detail/Low-Dropout-Regulators-LDO_DIODES_AP2112K-3-3TRG1_AP2112K-3-3TRG1_C51118.html",
+    pins = {
+        "VIN": VIN,
+        "GND": GND,
+        "EN": _en,
+        "NC": NC,
+        "VOUT": VOUT,
+    },
+)

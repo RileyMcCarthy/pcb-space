@@ -1,0 +1,25 @@
+"""Sourced by pcb-space. Pin names come from the CAD library,
+not a datasheet lock — check SOURCE.json gates before trusting.
+LCSC C231329 / SMD,3x2.5mm
+"""
+
+P1 = io(Net(), optional=True)
+P2 = io(Net(), optional=True)
+
+Component(
+    name = "B3U_1000P",
+    footprint = File("SW_SPST_B3U-1000P.kicad_mod"),
+    symbol = Symbol(
+        name = "B3U_1000P",
+        definition = [
+            ("P1", ["1"]),
+            ("P2", ["2"]),
+        ],
+    ),
+    part = Part(mpn = "B3U-1000P", manufacturer = "Omron"),
+    datasheet = "https://lcsc.com/product-detail/Others_Omron-Electronics_B3U-1000P_Omron-Electronics-B3U-1000P_C231329.html",
+    pins = {
+        "P1": P1,
+        "P2": P2,
+    },
+)

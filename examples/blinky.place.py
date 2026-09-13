@@ -1,7 +1,27 @@
-Board(size_mm=(20, 10), layers=2, stackup="jlcpcb_2l_1oz")
+Board(width=20, height=10, layers=2, stackup="jlcpcb_2l_1oz")
 
-Place("J1", at=(18.0, 5.0), rot=90, locked=True, reason="USB at board end")
-Keepout("EDGE", box=(17.0, 0.0, 20.0, 10.0), no=("via",))
+# CSS absolute: flush to the east end, vertically centered.
+Place(
+    "J1",
+    position="absolute",
+    right=0,
+    top=0,
+    bottom=0,
+    margin_top="auto",
+    margin_bottom="auto",
+    rotate=90,
+    locked=True,
+    reason="USB at board end",
+)
+Keepout(
+    "EDGE",
+    position="absolute",
+    right=0,
+    top=0,
+    bottom=0,
+    width=3,
+    no=("via",),
+)
 
 NetReq("USB_DP", "USB_DN", kind="usb_hs", z_diff_ohm=90, pair=True)
 NetReq("VCC", kind="power", volts=5.0, amps=0.1)

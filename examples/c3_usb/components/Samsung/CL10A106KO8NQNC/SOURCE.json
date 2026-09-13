@@ -1,0 +1,33 @@
+{
+  "mpn": "CL10A106KO8NQNC",
+  "manufacturer": "Samsung",
+  "kind": "generic",
+  "package": "0603",
+  "body_mm": null,
+  "lcsc": "C962136",
+  "jlc_basic": false,
+  "stock": 275350,
+  "datasheet": null,
+  "footprint": null,
+  "symbol": null,
+  "cad_origin": "stdlib-generic",
+  "status": "ok",
+  "gates": {
+    "ok": true,
+    "note": "generic: no unique CAD"
+  },
+  "vendors": [
+    {
+      "vendor": "lcsc",
+      "mpn": "CL10A106KO8NQNC",
+      "lcsc": "C962136",
+      "package": "0603",
+      "description": "10uF 16V X5R \u00b110% 0603 Multilayer Ceramic Capacitors MLCC - SMD/SMT ROHS",
+      "stock": 275350,
+      "price_usd": 0.0643,
+      "jlc_basic": false,
+      "jlc_preferred": false
+    }
+  ],
+  "pins": {}
+}

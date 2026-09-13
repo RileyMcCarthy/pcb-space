@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pcb-space"
-version = "0.1.0"
-description = "Zener-style compiler for PCB placement and routing constraints"
+version = "0.3.0"
+description = "Compiler in front of KiCad: source parts, place, route"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -20,9 +20,11 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+source = ["easyeda2kicad"]
 
 [project.scripts]
 pcb-space = "pcb_space.cli:main"
+pcb-source = "pcb_space.cli:source_main"
 
 [project.urls]
 Homepage = "https://github.com/RileyMcCarthy/pcb-space"
@@ -33,3 +35,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "kicad: needs kicad-cli (Gerbers / DRC / POS)",
+]

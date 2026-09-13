@@ -1,0 +1,103 @@
+{
+  "mpn": "TYPE-C-31-M-12",
+  "manufacturer": "HRO",
+  "kind": "ic",
+  "package": "SMD",
+  "body_mm": null,
+  "lcsc": "C165948",
+  "jlc_basic": false,
+  "stock": 89797,
+  "datasheet": "https://lcsc.com/product-detail/USB-Type-C_Korean-Hroparts-Elec-TYPE-C-31-M-12_C165948.html",
+  "footprint": "USB_C_Receptacle_HRO_TYPE-C-31-M-12.kicad_mod",
+  "symbol": "TYPE-C-31-M-12.kicad_sym",
+  "cad_origin": "kicad-lib",
+  "status": "ok",
+  "gates": {
+    "ok": true,
+    "footprint": "examples/c3_usb/components/HRO/TYPE-C-31-M-12/USB_C_Receptacle_HRO_TYPE-C-31-M-12.kicad_mod",
+    "pads": 22,
+    "fab_mm": [
+      8.94,
+      7.3
+    ],
+    "courtyard_mm": [
+      10.64,
+      9.42
+    ],
+    "datasheet_body_mm": [
+      8.94,
+      7.35
+    ],
+    "tol_mm": 0.2,
+    "body_ok": true,
+    "note": "KiCad official land; EasyEDA land had 17 overlapping pad pairs",
+    "pins": 16,
+    "pin_names": [
+      "CC1",
+      "CC2",
+      "DN1",
+      "DN2",
+      "DP1",
+      "DP2",
+      "EH",
+      "GND",
+      "SBU1",
+      "SBU2",
+      "VBUS"
+    ]
+  },
+  "vendors": [
+    {
+      "vendor": "lcsc",
+      "mpn": "TYPE-C-31-M-12",
+      "lcsc": "C165948",
+      "package": "SMD",
+      "description": "-30\u2103~+80\u2103 1 10,000 cycles 16P 20V 5A 7.35mm Female Surface Mount, Right Angle Type-C SMD USB Connectors ROHS",
+      "stock": 89797,
+      "price_usd": 0.1858,
+      "jlc_basic": false,
+      "jlc_preferred": false
+    }
+  ],
+  "pins": {
+    "GND": [
+      "A1",
+      "A12",
+      "B1",
+      "B12"
+    ],
+    "VBUS": [
+      "A4",
+      "A9",
+      "B4",
+      "B9"
+    ],
+    "SBU2": [
+      "B8"
+    ],
+    "CC1": [
+      "A5"
+    ],
+    "DN2": [
+      "B7"
+    ],
+    "DP1": [
+      "A6"
+    ],
+    "DN1": [
+      "A7"
+    ],
+    "DP2": [
+      "B6"
+    ],
+    "SBU1": [
+      "A8"
+    ],
+    "CC2": [
+      "B5"
+    ],
+    "EH": [
+      "SH"
+    ]
+  }
+}

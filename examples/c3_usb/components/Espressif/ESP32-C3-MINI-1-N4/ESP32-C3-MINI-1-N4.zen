@@ -1,0 +1,76 @@
+"""Sourced by pcb-space. Pin names come from the CAD library,
+not a datasheet lock — check SOURCE.json gates before trusting.
+LCSC C2838502 / SMD,16.6x13.2mm
+"""
+
+GND = io(Ground())
+P3V3 = io(Power())
+NC = io(Net(), optional=True)
+IO2 = io(Net(), optional=True)
+IO3 = io(Net(), optional=True)
+EN = io(Net(), optional=True)
+IO0 = io(Net(), optional=True)
+IO1 = io(Net(), optional=True)
+IO10 = io(Net(), optional=True)
+IO4 = io(Net(), optional=True)
+IO5 = io(Net(), optional=True)
+IO6 = io(Net(), optional=True)
+IO7 = io(Net(), optional=True)
+IO8 = io(Net(), optional=True)
+IO9 = io(Net(), optional=True)
+IO18 = io(Net(), optional=True)
+IO19 = io(Net(), optional=True)
+RXD0 = io(Net(), optional=True)
+TXD0 = io(Net(), optional=True)
+
+Component(
+    name = "ESP32_C3_MINI_1_N4",
+    footprint = File("ESP32-C6-MINI-1.kicad_mod"),
+    symbol = Symbol(
+        name = "ESP32_C3_MINI_1_N4",
+        definition = [
+            ("GND", ["1", "2", "11", "14", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53"]),
+            ("P3V3", ["3"]),
+            ("NC", ["4", "7", "9", "10", "15", "17", "24", "25", "28", "29", "32", "33", "34", "35"]),
+            ("IO2", ["5"]),
+            ("IO3", ["6"]),
+            ("EN", ["8"]),
+            ("IO0", ["12"]),
+            ("IO1", ["13"]),
+            ("IO10", ["16"]),
+            ("IO4", ["18"]),
+            ("IO5", ["19"]),
+            ("IO6", ["20"]),
+            ("IO7", ["21"]),
+            ("IO8", ["22"]),
+            ("IO9", ["23"]),
+            ("IO18", ["26"]),
+            ("IO19", ["27"]),
+            ("RXD0", ["30"]),
+            ("TXD0", ["31"]),
+        ],
+    ),
+    part = Part(mpn = "ESP32-C3-MINI-1-N4", manufacturer = "Espressif"),
+    datasheet = "https://www.lcsc.com/datasheet/C2838502.pdf",
+    pins = {
+        "GND": GND,
+        "P3V3": P3V3,
+        "NC": NC,
+        "IO2": IO2,
+        "IO3": IO3,
+        "EN": EN,
+        "IO0": IO0,
+        "IO1": IO1,
+        "IO10": IO10,
+        "IO4": IO4,
+        "IO5": IO5,
+        "IO6": IO6,
+        "IO7": IO7,
+        "IO8": IO8,
+        "IO9": IO9,
+        "IO18": IO18,
+        "IO19": IO19,
+        "RXD0": RXD0,
+        "TXD0": TXD0,
+    },
+)

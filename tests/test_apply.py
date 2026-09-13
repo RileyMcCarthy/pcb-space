@@ -32,7 +32,7 @@ def test_apply_moves_and_locks_j1(tmp_path: Path):
     assert block is not None
     at = footprint_at(block)
     assert at is not None
-    assert abs(at[0] - 18.0) < 0.01
+    assert abs(at[0] - 19.0) < 0.01
     assert abs(at[1] - 5.0) < 0.01
     assert abs(at[2] - 90) < 0.01
     assert "(locked yes)" in block or "locked)" in block
@@ -52,7 +52,7 @@ def test_check_fails_if_connector_moves(tmp_path: Path):
     shutil.copy(FIXTURES / "tiny.kicad_pro", tmp_path / "tiny.kicad_pro")
     job = compile_design(load_place_file(ROOT / "examples" / "blinky.place.py"))
     apply_job(job, pcb, backup=False)
-    text = pcb.read_text().replace("(at 18.0000 5.0000 90)", "(at 1.0000 1.0000 0)")
+    text = pcb.read_text().replace("(at 19.0000 5.0000 90)", "(at 1.0000 1.0000 0)")
     pcb.write_text(text)
     failures = check_job(job, pcb)
     assert any("J1 moved" in f for f in failures)

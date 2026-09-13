@@ -1,0 +1,76 @@
+{
+  "mpn": "AP2112K-3.3TRG1",
+  "manufacturer": "Diodes Inc",
+  "kind": "ic",
+  "package": "SOT-25-5",
+  "body_mm": [
+    2.9,
+    1.6
+  ],
+  "lcsc": "C51118",
+  "jlc_basic": false,
+  "stock": 79480,
+  "datasheet": "https://lcsc.com/product-detail/Low-Dropout-Regulators-LDO_DIODES_AP2112K-3-3TRG1_AP2112K-3-3TRG1_C51118.html",
+  "footprint": "SOT-23-5.kicad_mod",
+  "symbol": "AP2112K-3.3TRG1.kicad_sym",
+  "cad_origin": "kicad-lib+easyeda-symbol",
+  "status": "ok",
+  "gates": {
+    "ok": true,
+    "footprint": "examples/c3_usb/components/Diodes_Inc/AP2112K-3.3TRG1/SOT-23-5.kicad_mod",
+    "pads": 5,
+    "fab_mm": [
+      1.6,
+      2.9
+    ],
+    "courtyard_mm": [
+      4.1,
+      3.4
+    ],
+    "datasheet_body_mm": [
+      2.9,
+      1.6
+    ],
+    "tol_mm": 0.2,
+    "body_ok": true,
+    "note": null,
+    "pins": 5,
+    "pin_names": [
+      "EN",
+      "GND",
+      "NC",
+      "VIN",
+      "VOUT"
+    ]
+  },
+  "vendors": [
+    {
+      "vendor": "lcsc",
+      "mpn": "AP2112K-3.3TRG1",
+      "lcsc": "C51118",
+      "package": "SOT-25-5",
+      "description": "-40\u2103~+85\u2103@(Ta) 1 250mV@(600mA) 3.3V 50uVrms 55uA 600mA 65dB@(1kHz) 6V Fixed Over Current Protection\u3001Thermal Shutdown\u3001Enable control Positive SOT-25-5 Voltage Regulators - Linear, Low Drop Out (LDO) Regulators ROHS",
+      "stock": 79480,
+      "price_usd": 0.1577,
+      "jlc_basic": false,
+      "jlc_preferred": false
+    }
+  ],
+  "pins": {
+    "VIN": [
+      "1"
+    ],
+    "GND": [
+      "2"
+    ],
+    "EN": [
+      "3"
+    ],
+    "NC": [
+      "4"
+    ],
+    "VOUT": [
+      "5"
+    ]
+  }
+}

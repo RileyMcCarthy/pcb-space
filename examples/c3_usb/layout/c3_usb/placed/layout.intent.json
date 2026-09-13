@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "kind": "floorplan-intent",
+  "units": "mm",
+  "envelope": {
+    "rect": [
+      0.0,
+      0.0,
+      40.0,
+      30.0
+    ],
+    "tolerance_mm": 0.5
+  },
+  "must_lock": [
+    "J1",
+    "U1"
+  ],
+  "edge_connectors": [
+    {
+      "ref": "J1",
+      "edge": "south",
+      "overhang_mm": {
+        "min": 0.0,
+        "max": 2.5
+      },
+      "note": "USB-C at south edge (rot 0 so KRT pad AABBs match the land)"
+    }
+  ],
+  "keepouts": [
+    {
+      "name": "ANTENNA",
+      "rect": [
+        0.0,
+        0.0,
+        1.0,
+        16.0
+      ],
+      "sides": [
+        "F",
+        "B"
+      ]
+    }
+  ],
+  "blocks": [],
+  "legality_budget": {
+    "overlap_area": 0.0,
+    "oob_count": 1.0
+  }
+}

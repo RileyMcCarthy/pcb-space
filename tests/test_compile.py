@@ -15,6 +15,17 @@ def test_blinky_usb_compiles_to_a_pair():
     assert cls.diff_pair_gap_mm is not None
     assert cls.diff_pair_width_mm is not None
     assert cls.track_width_mm > 0.05
+    # 2-layer loosely-coupled 90 Ω is ~2 mm — unusable at USB-C pitch.
+    assert cls.diff_pair_width_mm <= 0.25
+    assert cls.clearance_mm <= 0.20
+
+
+def test_c3_usb_pair_fits_connector_pitch():
+    job = compile_design(load_place_file(ROOT / "examples" / "c3_usb" / "c3_usb.place.py"))
+    cls = next(c for c in job.classes if c.name == "USB")
+    assert cls.diff_pair_width_mm == 0.10
+    assert cls.diff_pair_gap_mm == 0.10
+    assert cls.clearance_mm == 0.10
 
 
 def test_analog_is_not_autorouted():
@@ -31,6 +42,7 @@ def test_locked_connectors_are_in_the_job():
     locked = {p.ref: p for p in job.places if p.locked}
     assert locked["U26"].at == (47.2, 10.0)
     assert locked["U26"].rot == 90
+    assert locked["U26"].left == 47.2
     assert locked["U28"].reason.startswith("FFC")
 
 

@@ -1,0 +1,64 @@
+{
+  "mpn": "B3U-1000P",
+  "manufacturer": "Omron",
+  "kind": "ic",
+  "package": "SMD,3x2.5mm",
+  "body_mm": [
+    3.0,
+    2.5
+  ],
+  "lcsc": "C231329",
+  "jlc_basic": false,
+  "stock": 115424,
+  "datasheet": "https://lcsc.com/product-detail/Others_Omron-Electronics_B3U-1000P_Omron-Electronics-B3U-1000P_C231329.html",
+  "footprint": "SW_SPST_B3U-1000P.kicad_mod",
+  "symbol": "B3U-1000P.kicad_sym",
+  "cad_origin": "kicad-lib+easyeda-symbol",
+  "status": "ok",
+  "gates": {
+    "ok": true,
+    "footprint": "examples/c3_usb/components/Omron/B3U-1000P/SW_SPST_B3U-1000P.kicad_mod",
+    "pads": 2,
+    "fab_mm": [
+      3.0,
+      2.5
+    ],
+    "courtyard_mm": [
+      4.8,
+      3.3
+    ],
+    "datasheet_body_mm": [
+      3.0,
+      2.5
+    ],
+    "tol_mm": 0.2,
+    "body_ok": true,
+    "note": null,
+    "pins": 2,
+    "pin_names": [
+      "P1",
+      "P2"
+    ]
+  },
+  "vendors": [
+    {
+      "vendor": "lcsc",
+      "mpn": "B3U-1000P",
+      "lcsc": "C231329",
+      "package": "SMD,3x2.5mm",
+      "description": "-25\u2103~+70\u2103 1.53N 1.6mm 12V 2.5mm 3mm 50mA Round Button SMD(SMT) Tab SPST Surface Mount,Vertical SMD,3x2.5mm Tactile Switches ROHS",
+      "stock": 115424,
+      "price_usd": 0.1784,
+      "jlc_basic": false,
+      "jlc_preferred": false
+    }
+  ],
+  "pins": {
+    "P1": [
+      "1"
+    ],
+    "P2": [
+      "2"
+    ]
+  }
+}

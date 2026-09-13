@@ -47,6 +47,16 @@
 			)
 		)
 		(attr smd)
+		(fp_rect
+			(start -1 -1)
+			(end 1 1)
+			(stroke
+				(width 0.05)
+				(type solid)
+			)
+			(fill no)
+			(layer "F.CrtYd")
+		)
 		(pad "1" smd rect
 			(at 0 0)
 			(size 0.8 0.8)

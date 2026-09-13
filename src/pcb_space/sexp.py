@@ -68,5 +68,25 @@ def footprint_at(block: str) -> tuple[float, float, float] | None:
     return float(m.group(1)), float(m.group(2)), rot
 
 
+def has_edge_cuts_shape(text: str) -> bool:
+    """True if a board-level graphic is on Edge.Cuts (not the layer table).
+
+    KiCad writes ``(layer "Edge.Cuts")`` several lines below ``(gr_rect``, so a
+    short look-behind misses the outline. Footprint ``fp_*`` on Edge.Cuts (a
+    USB-C shell notch) is not a board outline.
+    """
+    i = 0
+    while True:
+        j = text.find('(layer "Edge.Cuts")', i)
+        if j < 0:
+            return False
+        window = text[max(0, j - 500) : j]
+        gr = window.rfind("(gr_")
+        fp = window.rfind("(fp_")
+        if gr >= 0 and gr > fp:
+            return True
+        i = j + 1
+
+
 def new_uuid() -> str:
     return str(uuid.uuid4())

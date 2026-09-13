@@ -11,5 +11,31 @@ venv/
 .ruff_cache/
 *.bak
 *.bak-*
+*.bak-silk
 .DS_Store
 jobs/
+.pcb/
+.easyeda_cache/
+
+# Review copies the Zener stdlib (~GB). Do not commit.
+**/review/zener_sch/
+**/review/index.html
+**/review/board.glb
+**/review/*.svg
+**/review/sch/
+**/review/silk.kicad_*
+**/review/schematic.pdf
+**/review/schematic.kicad_sch
+**/review/report.json
+
+# Route step boards; keep routed/layout.kicad_pcb
+**/routed/0[0-9]_*.kicad_*
+**/routed/pcbspace_route.sh
+**/placed/*.preseed.*
+**/layout.log
+**/fab/*-drl_map.pdf
+**/fab/c3_usb-jlc.zip
+**/fab/drc.json
+**/fab/pos_kicad.csv
+**/fab/report.json
+**/fab/layout.kicad_prl

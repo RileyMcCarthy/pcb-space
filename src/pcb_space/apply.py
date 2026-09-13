@@ -7,8 +7,19 @@ import re
 import shutil
 from pathlib import Path
 
+from dataclasses import replace
+
 from .compile import CompiledJob
-from .sexp import board_footprint_spans, footprint_reference, matching_paren, new_uuid
+from .layout import footprints_by_ref, resolve_place, resolve_regions
+from .model import BoardSpec, PlaceSpec
+from .refs import build_alias_index, resolve_ref
+from .sexp import (
+    board_footprint_spans,
+    footprint_reference,
+    has_edge_cuts_shape,
+    matching_paren,
+    new_uuid,
+)
 
 
 def apply_job(job: CompiledJob, pcb_path: Path, backup: bool = True) -> dict:
@@ -20,48 +31,78 @@ def apply_job(job: CompiledJob, pcb_path: Path, backup: bool = True) -> dict:
         shutil.copy2(pcb_path, bak)
 
     text = pcb_path.read_text()
-    placed, missing = _apply_places(text, job)
+    placed, missing, resolved = _apply_places(text, job)
     text = placed
     text = _apply_outline(text, job)
     text = _apply_keepouts(text, job)
     pcb_path.write_text(text)
 
+    write_dru(job, pcb_path)
     pro_path = pcb_path.with_suffix(".kicad_pro")
     if pro_path.exists():
         _apply_pro(pro_path, job)
-    dru_path = pcb_path.with_suffix(".kicad_dru")
-    dru_path.write_text(_render_dru(job))
 
+    aliases = build_alias_index(pcb_path.read_text())
     return {
         "pcb": str(pcb_path),
         "placed": [p.ref for p in job.places if p.ref not in missing],
+        "aliases": {p.ref: resolve_ref(p.ref, aliases) for p in job.places},
+        "resolved": [
+            {"ref": p.ref, "at": list(p.at), "rot": p.rot}
+            for p in resolved
+            if p.at is not None
+        ],
         "missing": missing,
         "classes": [c.name for c in job.classes],
-        "dru": str(dru_path),
+        "dru": str(pcb_path.with_suffix(".kicad_dru")),
     }
 
 
-def _apply_places(text: str, job: CompiledJob) -> tuple[str, list[str]]:
-    by_ref = {p.ref: p for p in job.places}
-    found: set[str] = set()
+def _apply_places(text: str, job: CompiledJob) -> tuple[str, list[str], list]:
+    board = BoardSpec(
+        size_mm=job.board_size_mm,
+        padding=job.padding,
+        layers=job.layers,
+        stackup=job.stackup,
+        pcb=job.pcb,
+        planes=job.planes,
+    )
+    regions = resolve_regions(board, job.regions)
+    fps = footprints_by_ref(text)
+    aliases = build_alias_index(text)
+    resolved_places = []
+    by_kref: dict[str, PlaceSpec] = {}
+    found_aliases: set[str] = set()
+    for p in job.places:
+        kref = resolve_ref(p.ref, aliases) or p.ref
+        block = fps.get(kref)
+        bound = replace(p, ref=kref)
+        rp = resolve_place(bound, board, block, regions)
+        resolved_places.append(rp)
+        by_kref[kref] = rp
+        if kref in fps:
+            found_aliases.add(p.ref)
     spans = board_footprint_spans(text)
     pieces = []
     last = 0
     for start, end in spans:
         block = text[start:end]
         ref = footprint_reference(block)
-        if ref and ref in by_ref:
-            found.add(ref)
-            block = _rewrite_footprint(block, by_ref[ref])
+        if ref and ref in by_kref:
+            place = by_kref[ref]
+            if place.at is not None:
+                block = _rewrite_footprint(block, place)
         pieces.append(text[last:start])
         pieces.append(block)
         last = end
     pieces.append(text[last:])
-    missing = [p.ref for p in job.places if p.ref not in found]
-    return "".join(pieces), missing
+    missing = [p.ref for p in job.places if p.ref not in found_aliases]
+    return "".join(pieces), missing, resolved_places
 
 
 def _rewrite_footprint(block: str, place) -> str:
+    if place.at is None:
+        return block
     layer = "F.Cu" if place.side == "F" else "B.Cu"
     at = f"(at {place.at[0]:.4f} {place.at[1]:.4f} {place.rot:g})"
     block, n = re.subn(
@@ -88,15 +129,27 @@ def _rewrite_footprint(block: str, place) -> str:
             )
         else:
             block = re.sub(r"\(locked\s+(yes|no)\)", "(locked yes)", block, count=1)
-        # KiCad 8+ also encodes lock on attr.
-        block = re.sub(r"\(attr smd\)", "(attr smd locked)", block, count=1)
-        block = re.sub(r"\(attr through_hole\)", "(attr through_hole locked)", block, count=1)
+        # KiCad 10 attr tokens are smd/through_hole/virtual/… only.
+        # Lock is a sibling (locked yes), not an attr flag.
     return block
+
+
+def _edge_rect(w: float, h: float) -> str:
+    return (
+        f'\t(gr_rect\n'
+        f"\t\t(start 0 0)\n"
+        f"\t\t(end {w:g} {h:g})\n"
+        f"\t\t(stroke (width 0.05) (type default))\n"
+        f"\t\t(fill none)\n"
+        f'\t\t(layer "Edge.Cuts")\n'
+        f'\t\t(uuid "{new_uuid()}")\n'
+        f"\t)\n"
+    )
 
 
 def _apply_outline(text: str, job: CompiledJob) -> str:
     w, h = job.board_size_mm
-    # Replace the first Edge.Cuts gr_rect if present.
+
     def repl(m):
         return (
             f"{m.group(1)}(start 0 0)\n"
@@ -112,7 +165,14 @@ def _apply_outline(text: str, job: CompiledJob) -> str:
         text,
         count=1,
     )
-    return new if n else text
+    if n:
+        return new
+    if has_edge_cuts_shape(text):
+        return text
+    if not text.rstrip().endswith(")"):
+        raise ValueError("board file does not end with )")
+    stripped = text.rstrip()
+    return stripped[:-1] + _edge_rect(w, h) + ")\n"
 
 
 def _apply_keepouts(text: str, job: CompiledJob) -> str:
@@ -165,6 +225,28 @@ def _drop_named_zone(text: str, name: str) -> str:
         if f'(name "{name}")' in block:
             return text[:j] + text[end + 1 :]
         start = end + 1
+
+
+def write_dru(job: CompiledJob, pcb_path: Path) -> Path:
+    """Write compiled custom rules (.kicad_dru). Does not touch .kicad_pro.
+
+    KRT route steps rewrite USB pair-gap to 0.13/0.16; fab restores the
+    compiled 2-layer 0.10/0.10 rule. Do not also rewrite netclass clearance
+    — KRT lowers Default/Power to the routed floor and raising them
+    re-fails DRC on legal 0.10 mm copper.
+    """
+    path = Path(pcb_path).with_suffix(".kicad_dru")
+    path.write_text(_render_dru(job))
+    return path
+
+
+def restore_design_rules(job: CompiledJob, pcb_path: Path) -> None:
+    """Rewrite .kicad_pro net classes and .kicad_dru from the compiled job."""
+    pcb_path = Path(pcb_path)
+    write_dru(job, pcb_path)
+    pro_path = pcb_path.with_suffix(".kicad_pro")
+    if pro_path.exists():
+        _apply_pro(pro_path, job)
 
 
 def _apply_pro(pro_path: Path, job: CompiledJob) -> None:

@@ -1,0 +1,166 @@
+{
+  "mpn": "ESP32-C3-MINI-1-N4",
+  "manufacturer": "Espressif",
+  "kind": "ic",
+  "package": "SMD,16.6x13.2mm",
+  "body_mm": [
+    16.6,
+    13.2
+  ],
+  "lcsc": "C2838502",
+  "jlc_basic": false,
+  "stock": 25989,
+  "datasheet": "https://www.lcsc.com/datasheet/C2838502.pdf",
+  "footprint": "ESP32-C6-MINI-1.kicad_mod",
+  "symbol": "ESP32-C3-MINI-1-N4.kicad_sym",
+  "cad_origin": "kicad-lib+easyeda-symbol",
+  "status": "ok",
+  "gates": {
+    "ok": true,
+    "footprint": "examples/c3_usb/components/Espressif/ESP32-C3-MINI-1-N4/ESP32-C6-MINI-1.kicad_mod",
+    "pads": 61,
+    "fab_mm": [
+      13.2,
+      16.6
+    ],
+    "courtyard_mm": [
+      13.7,
+      17.1
+    ],
+    "datasheet_body_mm": [
+      16.6,
+      13.2
+    ],
+    "tol_mm": 0.2,
+    "body_ok": true,
+    "note": null,
+    "pins": 53,
+    "pin_names": [
+      "EN",
+      "GND",
+      "IO0",
+      "IO1",
+      "IO10",
+      "IO18",
+      "IO19",
+      "IO2",
+      "IO3",
+      "IO4",
+      "IO5",
+      "IO6",
+      "IO7",
+      "IO8",
+      "IO9",
+      "NC",
+      "P3V3",
+      "RXD0",
+      "TXD0"
+    ]
+  },
+  "vendors": [
+    {
+      "vendor": "lcsc",
+      "mpn": "ESP32-C3-MINI-1-N4",
+      "lcsc": "C2838502",
+      "package": "SMD,16.6x13.2mm",
+      "description": "",
+      "stock": 25989,
+      "price_usd": 3.8395,
+      "jlc_basic": false,
+      "jlc_preferred": false
+    }
+  ],
+  "pins": {
+    "GND": [
+      "1",
+      "2",
+      "11",
+      "14",
+      "36",
+      "37",
+      "38",
+      "39",
+      "40",
+      "41",
+      "42",
+      "43",
+      "44",
+      "45",
+      "46",
+      "47",
+      "48",
+      "49",
+      "50",
+      "51",
+      "52",
+      "53"
+    ],
+    "P3V3": [
+      "3"
+    ],
+    "NC": [
+      "4",
+      "7",
+      "9",
+      "10",
+      "15",
+      "17",
+      "24",
+      "25",
+      "28",
+      "29",
+      "32",
+      "33",
+      "34",
+      "35"
+    ],
+    "IO2": [
+      "5"
+    ],
+    "IO3": [
+      "6"
+    ],
+    "EN": [
+      "8"
+    ],
+    "IO0": [
+      "12"
+    ],
+    "IO1": [
+      "13"
+    ],
+    "IO10": [
+      "16"
+    ],
+    "IO4": [
+      "18"
+    ],
+    "IO5": [
+      "19"
+    ],
+    "IO6": [
+      "20"
+    ],
+    "IO7": [
+      "21"
+    ],
+    "IO8": [
+      "22"
+    ],
+    "IO9": [
+      "23"
+    ],
+    "IO18": [
+      "26"
+    ],
+    "IO19": [
+      "27"
+    ],
+    "RXD0": [
+      "30"
+    ],
+    "TXD0": [
+      "31"
+    ]
+  }
+}

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
-from .model import Design, KeepoutSpec, PlaceSpec
+from .layout import resolve_keepout, resolve_regions
+from .model import Design, KeepoutSpec, PlaceSpec, RegionSpec
 from .stackup import diff_pair_geometry, get_stackup, ipc2221_width_mm, width_for_z0
 
 
@@ -50,6 +51,8 @@ class CompiledJob:
     planes: tuple[tuple[str, str], ...]
     places: list[PlaceSpec]
     keepouts: list[KeepoutSpec]
+    regions: list[RegionSpec]
+    padding: tuple[float, float, float, float]
     classes: list[CompiledClass]
     nets: list[CompiledNet]
     dru: list[DruRule]
@@ -65,6 +68,8 @@ class CompiledJob:
             "planes": [list(p) for p in self.planes],
             "places": [asdict(p) for p in self.places],
             "keepouts": [asdict(k) for k in self.keepouts],
+            "regions": [asdict(r) for r in self.regions],
+            "padding": list(self.padding),
             "classes": [asdict(c) for c in self.classes],
             "nets": [
                 {
@@ -117,7 +122,15 @@ def compile_design(design: Design) -> CompiledJob:
         if req.kind == "usb_hs":
             z = req.z_diff_ohm or 90.0
             dp_w, dp_g = diff_pair_geometry(z, stack)
-            width, clearance = dp_w, max(0.12, round(dp_g, 2))
+            # Loosely-coupled 90 Ω on 1.6 mm 2-layer wants ~2 mm members.
+            # USB-C pad pitch is ~0.5 mm. Clamp to a tightly-coupled pair at
+            # the board floor; true 90 Ω needs 4-layer (or thinner dielectric).
+            # Pair gap is not other-net clearance — keep class clearance at
+            # the board floor so DRC is not graded at 1.5 mm.
+            if dp_w > 0.25:
+                dp_w, dp_g = 0.10, 0.10
+            width = dp_w
+            clearance = min(0.16, dp_w)
             autoroute = "diff_pair"
             layers = req.layers or ("F.Cu", "B.Cu")
         elif req.kind == "power":
@@ -234,6 +247,12 @@ def compile_design(design: Design) -> CompiledJob:
                 )
             )
 
+    region_rects = resolve_regions(board, design.regions)
+    keepouts = [
+        replace(ko, box=resolve_keepout(ko, board, region_rects))
+        for ko in design.keepouts
+    ]
+
     krt = {
         "skip_patterns": skip,
         "planes": [{"net": n, "layer": l} for n, l in board.planes],
@@ -270,7 +289,9 @@ def compile_design(design: Design) -> CompiledJob:
         pcb=board.pcb,
         planes=board.planes,
         places=list(design.places),
-        keepouts=list(design.keepouts),
+        keepouts=keepouts,
+        regions=list(design.regions),
+        padding=board.padding,
         classes=list(classes.values()),
         nets=compiled_nets,
         dru=dru,
