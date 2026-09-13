@@ -14,6 +14,7 @@ from pathlib import Path
 from .apply import write_dru
 from .check import check_job
 from .compile import CompiledJob
+from .copper import power_ampacity_failures, unrouted_nets, vias_on_no_via_nets
 from .place import copy_with_siblings
 from .silk import silk_job
 from .sexp import (
@@ -529,6 +530,25 @@ def fab_job(
         return result
     if missing_cpl:
         result["error"] = f"BOM refs missing from CPL: {', '.join(missing_cpl)}"
+        _write_notes(out_dir, job, result)
+        return result
+
+    opens = unrouted_nets(text)
+    result["unrouted"] = opens
+    if opens:
+        result["error"] = "unrouted net " + ", ".join(opens)
+        _write_notes(out_dir, job, result)
+        return result
+    via_fail = vias_on_no_via_nets(job, text)
+    result["no_via_violations"] = via_fail
+    if via_fail:
+        result["error"] = "; ".join(via_fail)
+        _write_notes(out_dir, job, result)
+        return result
+    amp = power_ampacity_failures(job, text)
+    result["ampacity"] = amp
+    if amp:
+        result["error"] = "; ".join(amp)
         _write_notes(out_dir, job, result)
         return result
 

@@ -14,6 +14,7 @@ def test_ci_workflow_exists():
     text = WORKFLOW.read_text()
     assert "\n  pytest:\n" in text
     assert "\n  c3-usb-fab:\n" in text
+    assert "\n  krt-4layer:\n" in text
 
 
 def test_unit_job_skips_kicad_marker():
@@ -35,3 +36,12 @@ def test_kicad_job_installs_kicad_10():
     text = WORKFLOW.read_text()
     assert "ppa:kicad/kicad-10.0-releases" in text
     assert "need KiCad 10.x" in text
+
+
+def test_krt_job_pins_router_and_routes_4layer():
+    text = WORKFLOW.read_text()
+    assert "3244726b2c15668fb109a0bb24384750a054af40" in text
+    assert "github.com/drandyhaas/KiCadRoutingTools" in text
+    assert "examples/buck_sw/buck_sw.place.py" in text
+    assert "pcb-space place" in text
+    assert "pcb-space route" in text

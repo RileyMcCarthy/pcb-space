@@ -33,6 +33,7 @@ class CompiledNet:
     keep_clear_of: str | None = None
     keep_clear_mm: float | None = None
     kind: str = ""
+    amps: float | None = None
 
 
 @dataclass
@@ -196,6 +197,12 @@ def compile_design(design: Design) -> CompiledJob:
         if req.pair:
             autoroute = "diff_pair"
 
+        max_mm = req.max_mm
+        if max_mm is None and req.kind == "analog":
+            max_mm = 25.0
+        if max_mm is None and req.kind == "switch_node":
+            max_mm = 8.0
+
         compiled_nets.append(
             CompiledNet(
                 patterns=req.nets,
@@ -203,11 +210,12 @@ def compile_design(design: Design) -> CompiledJob:
                 autoroute=autoroute,
                 vias=vias,
                 layers=layers,
-                max_length_mm=req.max_mm,
+                max_length_mm=max_mm,
                 match_group=match_group,
                 keep_clear_of=req.keep_clear_of,
                 keep_clear_mm=req.keep_clear_mm,
                 kind=req.kind,
+                amps=req.amps if req.kind == "power" else None,
             )
         )
         if autoroute is False:
@@ -280,6 +288,7 @@ def compile_design(design: Design) -> CompiledJob:
             for p in req.nets
             if p not in {a for a, _ in board.planes}
         ],
+        "sensitive": _sensitive_groups(compiled_nets, classes),
     }
 
     return CompiledJob(
@@ -298,6 +307,35 @@ def compile_design(design: Design) -> CompiledJob:
         skip_autoroute_patterns=skip,
         krt=krt,
     )
+
+
+def _sensitive_groups(
+    compiled_nets: list[CompiledNet],
+    classes: dict[str, CompiledClass],
+) -> list[dict]:
+    by_kind: dict[str, dict] = {}
+    for net in compiled_nets:
+        if net.autoroute is not False:
+            continue
+        kind = net.kind or "analog"
+        cls = classes.get(net.class_name)
+        group = by_kind.setdefault(
+            kind,
+            {
+                "kind": kind,
+                "nets": [],
+                "width": cls.track_width_mm if cls else 0.20,
+                "clearance": cls.clearance_mm if cls else 0.20,
+                "layers": list(net.layers) or ["F.Cu"],
+            },
+        )
+        group["nets"].extend(net.patterns)
+    ordered: list[dict] = []
+    for kind in ("switch_node", "analog"):
+        if kind in by_kind:
+            ordered.append(by_kind.pop(kind))
+    ordered.extend(by_kind.values())
+    return ordered
 
 
 def _slug(s: str) -> str:

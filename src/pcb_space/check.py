@@ -10,6 +10,7 @@ from .compile import CompiledJob
 from .layout import footprints_by_ref, resolve_place, resolve_regions
 from .model import BoardSpec
 from .refs import build_alias_index, resolve_ref
+from .copper import sensitive_airwire_failures
 from .sexp import board_footprint_spans, footprint_at, footprint_reference
 
 
@@ -79,6 +80,7 @@ def check_job(job: CompiledJob, pcb_path: Path, tol_mm: float = 0.05) -> list[st
     dru = pcb_path.with_suffix(".kicad_dru")
     if job.dru and not dru.exists():
         failures.append(f"missing {dru.name}")
+    failures.extend(sensitive_airwire_failures(job, text))
     return failures
 
 

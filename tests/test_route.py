@@ -33,3 +33,28 @@ def test_c3_route_plan_is_two_layer():
     assert joined.index("route.py") < joined.index("route_planes.py")
     last = cmds[-1]
     assert any(p.endswith("route.py") for p in last)
+
+
+def test_sensitive_pass_is_front_copper_only():
+    job = compile_design(load_place_file(ROOT / "examples" / "forma_pod.place.py"))
+    cmds = krt_commands(job, Path("/tmp/placed.kicad_pcb"), work=Path("/tmp/routed-sens"))
+    maze = next(c for c in cmds if "*" in c and any(p.endswith("route.py") for p in c))
+    assert "!BOOST.BOOST_SW" in maze
+    switch = next(
+        c
+        for c in cmds
+        if "BOOST.BOOST_SW" in c
+        and "*" not in c
+        and any(p.endswith("route.py") for p in c)
+    )
+    analog = next(
+        c
+        for c in cmds
+        if "CH[1-9]*" in c and "*" not in c and any(p.endswith("route.py") for p in c)
+    )
+    layers = switch[switch.index("--layers") + 1 : switch.index("--layer-costs")]
+    assert layers == ["F.Cu"]
+    assert "100000" in switch
+    analog_layers = analog[analog.index("--layers") + 1 : analog.index("--layer-costs")]
+    assert analog_layers == ["F.Cu"]
+    assert cmds.index(analog) < cmds.index(maze)

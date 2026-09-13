@@ -49,3 +49,41 @@ jobs:
             ${{ runner.temp }}/c3_usb_fab/cpl.csv
             ${{ runner.temp }}/c3_usb_fab/FAB_NOTES.md
             ${{ runner.temp }}/c3_usb_fab/*.drl
+
+  krt-4layer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install KiCad 10 CLI
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends software-properties-common
+          sudo add-apt-repository -y ppa:kicad/kicad-10.0-releases
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends kicad
+          kicad-cli version | grep -q '^10\.' || { echo "need KiCad 10.x"; exit 1; }
+      - name: Pin KiCadRoutingTools
+        run: |
+          git clone https://github.com/drandyhaas/KiCadRoutingTools.git "$HOME/KiCadRoutingTools"
+          git -C "$HOME/KiCadRoutingTools" checkout 3244726b2c15668fb109a0bb24384750a054af40
+          pip install "numpy>=1.21" "scipy>=1.7" "shapely>=1.8"
+      - run: pip install -e ".[dev]"
+      - name: Place, route, fab examples/buck_sw
+        env:
+          KRT_HOME: /home/runner/KiCadRoutingTools
+          PCBSPACE_REQUIRE_KICAD: "1"
+        run: |
+          pcb-space place examples/buck_sw/buck_sw.place.py
+          pcb-space route examples/buck_sw/buck_sw.place.py
+          python3 -X utf8 "$KRT_HOME/py_router/check_connected.py" "$GITHUB_WORKSPACE/examples/buck_sw/layout/buck_sw/routed/layout.kicad_pcb"
+          pcb-space fab examples/buck_sw/buck_sw.place.py -o "$RUNNER_TEMP/buck_sw_fab"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: buck_sw-fab
+          path: |
+            ${{ runner.temp }}/buck_sw_fab/gerbers
+            ${{ runner.temp }}/buck_sw_fab/bom.csv
+            ${{ runner.temp }}/buck_sw_fab/FAB_NOTES.md

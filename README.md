@@ -151,12 +151,12 @@ Rejected on purpose (clear error, not a silent no-op): `z-index`, `flex` / `grid
 
 ## Source (parts)
 
-Distributors are not CAD libraries. `source search` hits LCSC/JLC. `source check` fails a land whose Fab body is not the datasheet size (the SHT40 1.5 mm die on a 1.0 mm UDFN). Passives stay stdlib generics — do not download a unique 0402 symbol.
+Distributors are not CAD libraries. `source search` lists LCSC/JLC hits — **import does not autoselect EasyEDA.** Pass `--pick C…` when several rows match. ICs need `--footprint` (KiCad land) or opt-in `--easyeda` (candidate only), plus `--pins` from the datasheet table. EasyEDA pin names are not the schematic. Passives stay stdlib generics.
 
 ```bash
 pcb-space source search TPS61023DRLR --fab jlcpcb
 pcb-space source import  "100nF 0402" --kind generic -o components
-pcb-space source import  SHT40-AD1B --footprint path/to.kicad_mod --body 1.5x1.5
+pcb-space source import  C919459 --footprint path/to.kicad_mod --body 1.5x1.5 --pins PINS.json
 pcb-space source check   components/Sensirion/SHT40-AD1B --body 1.5x1.5
 ```
 
@@ -186,7 +186,7 @@ pcb-space review  examples/c3_usb/c3_usb.place.py
 pcb-space source  search "100nF 0402"
 ```
 
-Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI job `pytest` runs every test except those marked `kicad`. Job `c3-usb-fab` installs KiCad 10, runs the **full** suite (kicad tests may not skip), then `pcb-space fab` on the committed routed board. Both jobs are required to merge to `master`. Full re-place / re-route needs `KRT_HOME` and is not run on GitHub Actions.
+Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI job `pytest` runs every test except those marked `kicad`. Job `c3-usb-fab` installs KiCad 10 and fabs the committed routed board. Job `krt-4layer` pins KiCadRoutingTools and `place`+`route`+`fab`s `examples/buck_sw/` (4-layer, switch-node cluster).
 
 `apply` locks `Place(..., locked=True)` footprints, writes the `Edge.Cuts` outline from `Board` size when the seed has none, writes net classes into the sibling `.kicad_pro`, writes `.kicad_dru`, and inserts keepout zones. It copies the board to `*.kicad_pcb.bak-pcbspace` first.
 

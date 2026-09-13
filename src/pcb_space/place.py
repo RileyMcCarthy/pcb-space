@@ -9,6 +9,8 @@ import subprocess
 from pathlib import Path
 
 from .apply import apply_job
+from .check import check_job
+from .cluster import cluster_sensitive
 from .compile import CompiledJob
 from .intent import intent_from_job
 from .project import packed_reason
@@ -115,6 +117,14 @@ def place_job(
             if s.exists() and not d.exists():
                 shutil.copy2(s, d)
         result["silk"] = silk_job(job, out, backup=False)
+        clustered, moves = cluster_sensitive(job, out.read_text())
+        if moves:
+            out.write_text(clustered)
+        result["cluster"] = moves
+        placed_fail = check_job(job, out)
+        result["check"] = placed_fail
+        if placed_fail and not result.get("error"):
+            result["error"] = "pcb-space check: " + "; ".join(placed_fail)
     else:
         copy_with_siblings(work, out)
         result["error"] = result["error"] if result.get("error") else "place_seed wrote nothing"

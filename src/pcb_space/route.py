@@ -147,6 +147,42 @@ def krt_commands(
         cmds.append(cmd)
         prev = s_usb
 
+    for group in job.krt.get("sensitive") or []:
+        nets = [str(n) for n in (group.get("nets") or [])]
+        if not nets:
+            continue
+        slayers = [str(layer) for layer in (group.get("layers") or ["F.Cu"])]
+        s_sens = work / f"02_sensitive_{group.get('kind', 'net')}.kicad_pcb"
+        cmds.append(
+            [
+                str(py),
+                "-X",
+                "utf8",
+                str(router / "route.py"),
+                str(prev),
+                str(s_sens),
+                "--nets",
+                *nets,
+                "--layers",
+                *slayers,
+                "--layer-costs",
+                *["1.0"] * len(slayers),
+                "--track-width",
+                str(group.get("width", 0.20)),
+                "--clearance",
+                str(group.get("clearance", 0.20)),
+                "--via-cost",
+                "100000",
+                "--grid-step",
+                "0.05" if job.layers <= 2 else "0.1",
+                "--max-ripup",
+                "5",
+                "--no-bga-zones",
+                "--keep-input-copper",
+            ]
+        )
+        prev = s_sens
+
     s_sig = work / "03_signals.kicad_pcb"
     power = [str(n) for n in (job.krt.get("power_nets") or [])]
     widths = []
