@@ -25,14 +25,9 @@ def _default_review_dir(pcb: Path) -> Path:
 
 
 def find_zen(place: Path, pcb: Path) -> Path | None:
-    cand = place.with_suffix(".zen")
-    if cand.exists():
-        return cand
-    for parent in (place.parent, pcb.parent, *pcb.parents):
-        zens = sorted(parent.glob("*.zen"))
-        if zens:
-            return zens[0]
-    return None
+    from .project import find_zen as _find
+
+    return _find(place, pcb)
 
 
 def find_netlist(pcb: Path) -> Path | None:
@@ -44,11 +39,9 @@ def find_netlist(pcb: Path) -> Path | None:
 
 
 def pcb_cli() -> Path:
-    found = shutil.which("pcb")
-    if found:
-        return Path(found)
-    home = Path.home() / ".local" / "bin" / "pcb"
-    return home if home.exists() else Path("pcb")
+    from .project import pcb_cli as _pcb_cli
+
+    return _pcb_cli()
 
 
 _PORT = re.compile(r'\("([^"]+)",\s*\[([^\]]*)\]')

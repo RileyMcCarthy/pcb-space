@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pcb-space"
-version = "0.3.0"
-description = "Compiler in front of KiCad: source parts, place, route"
+version = "0.4.0"
+description = "Zener schematic, then place/route/fab in front of KiCad"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

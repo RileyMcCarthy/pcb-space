@@ -11,6 +11,7 @@ from pathlib import Path
 from .apply import apply_job
 from .compile import CompiledJob
 from .intent import intent_from_job
+from .project import packed_reason
 from .refs import build_alias_index
 from .silk import silk_job
 
@@ -45,6 +46,13 @@ def place_job(
     force: bool = True,
 ) -> dict:
     pcb = Path(pcb)
+    reason = packed_reason(pcb)
+    if reason:
+        return {
+            "pcb": str(pcb),
+            "error": reason,
+            "krt": None,
+        }
     krt_home = Path(
         krt_home or os.environ.get("KRT_HOME", str(Path.home() / "Downloads" / "KiCadRoutingTools"))
     )
