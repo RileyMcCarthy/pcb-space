@@ -91,6 +91,7 @@ NET = """(export (version "E")
   (nets
     (net (code "1") (name "SPI_CLK")
       (node (ref "R1") (pin "1"))
+      (node (ref "U1") (pin "5"))
     )
     (net (code "2") (name "GND")
       (node (ref "R1") (pin "2"))
@@ -117,14 +118,12 @@ def test_pin_to_net_maps_ref_pin():
     assert lookup[("R1", "2")] == "GND"
 
 
-def test_annotate_replaces_local_label_with_stub_and_global():
+def test_annotate_replaces_on_pin_label_with_stub_and_local_label():
     out = annotate_sch_nets(SCH, NET)
-    assert '(label "SPI_CLK"' not in out
-    assert '(global_label "SPI_CLK"' in out
+    assert '(global_label "SPI_CLK"' not in out
+    assert '(label "SPI_CLK"' in out
     assert "(wire" in out
-    # Pin 1 is on the left (rot 0) → stub further left, label at that end.
     assert out.count("(wire") >= 1
-    # GND pin has no existing wire → power symbol
     assert '(lib_id "GND")' in out
     assert '(property "Value" "GND"' in out
 
@@ -140,7 +139,58 @@ def test_annotate_skips_power_when_wire_already_there():
     out = annotate_sch_nets(sch, NET)
     # Pin 2 already has a wire at the connection point — do not add a GND symbol.
     assert '(lib_id "GND")' not in out
-    assert '(global_label "SPI_CLK"' in out
+    assert '(label "SPI_CLK"' in out
+    assert '(global_label' not in out
+
+
+def test_one_pin_nets_are_not_labeled():
+    net = """(export (version "E")
+  (components
+    (comp (ref "R1") (value "10k") (footprint "R_0603"))
+  )
+  (nets
+    (net (code "1") (name "A1.D0")
+      (node (ref "R1") (pin "1"))
+    )
+    (net (code "2") (name "GND")
+      (node (ref "R1") (pin "2"))
+    )
+  )
+)
+"""
+    out = annotate_sch_nets(SCH, net)
+    assert '(label "A1.D0"' not in out
+
+
+def test_stagger_adjacent_stubs():
+    sch = SCH.replace(
+        '\t\t\t\t(pin unspecified line\n'
+        '\t\t\t\t\t(at 3.81 0 180)\n',
+        '\t\t\t\t(pin unspecified line\n'
+        '\t\t\t\t\t(at -3.81 -2.54 0)\n'
+        '\t\t\t\t\t(length 2.54)\n'
+        '\t\t\t\t\t(name "2"\n'
+        '\t\t\t\t\t\t(effects (font (size 1.27 1.27)))\n'
+        '\t\t\t\t\t)\n'
+        '\t\t\t\t\t(number "2"\n'
+        '\t\t\t\t\t\t(effects (font (size 1.27 1.27)))\n'
+        '\t\t\t\t\t)\n'
+        '\t\t\t\t)\n'
+        '\t\t\t\t(pin unspecified line\n'
+        '\t\t\t\t\t(at 3.81 0 180)\n',
+    )
+    # Both signal pins on the left: 1 at y=50, 2 at y=47.46
+    net = NET.replace(
+        '(node (ref "R1") (pin "2"))',
+        '(node (ref "R1") (pin "2"))\n      (node (ref "U2") (pin "1"))',
+    ).replace(
+        '(name "GND")',
+        '(name "SPI_CS")',
+    )
+    out = annotate_sch_nets(sch, net)
+    xs = __import__("re").findall(r'\(label "SPI_[A-Z]+"\n\t\t\(at ([0-9.+-]+)', out)
+    assert len(xs) == 2
+    assert xs[0] != xs[1]
 
 
 def test_parse_lib_pins_reads_connection_point():

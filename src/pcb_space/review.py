@@ -685,7 +685,7 @@ def review_job(
         f"{len(comps)} components, {len(nets)} nets" if comps else "Netlist not found",
         "3D uses kicad-cli pcb export glb (tracks, pads, zones, silk, mask).",
         "USB-C / ESP32-C6-MINI STEP may be missing from the KiCad 3D library.",
-        "Schematic is pcb apply schematic, then pin stubs + global labels from default.net.",
+        "Schematic is pcb apply schematic, then pin stubs + local net labels (power keeps GND/VCC symbols).",
         "Silkscreen refs are legalized (size from courtyard, slots off the body) before plotting.",
         "Do not upload Gerbers from this page.",
     ]

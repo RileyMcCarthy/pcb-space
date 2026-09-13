@@ -4,7 +4,10 @@
 A1-page zoom) and only draws wires for Power()/Ground() symbols. This
 rewriter:
 
-- signal nets: short stub off the pin + ``global_label`` with the net name
+- signal nets (2+ pins): short stub + local ``label`` (not a global arrow)
+- adjacent pins on the same side get staggered stub lengths so names
+  do not stack
+- unused one-pin nets are left unlabeled
 - power nets (GND, +12V, …): keep existing GND/VCC symbols; if a power pin
   has no wire, add a stub and a power symbol whose Value is the net
 """
@@ -13,6 +16,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections import defaultdict
 from pathlib import Path
 
 from .sexp import matching_paren, new_uuid
@@ -64,8 +68,9 @@ _POWER_NETS = {
     "DVDD1",
     "DVDD2",
 }
-_STUB_MM = 5.08
-_FONT = 1.524
+_STUB_SHORT = 3.81
+_STUB_LONG = 10.16
+_FONT = 1.27
 
 
 def is_power_net(name: str) -> bool:
@@ -206,7 +211,7 @@ def _strip_local_labels(text: str) -> str:
     return "".join(pieces)
 
 
-def _stub_delta(world_rot: float, length: float = _STUB_MM) -> tuple[float, float]:
+def _stub_delta(world_rot: float, length: float) -> tuple[float, float]:
     rad = math.radians(world_rot)
     return (-length * math.cos(rad), -length * math.sin(rad))
 
@@ -242,17 +247,16 @@ def _wire_sexp(x0: float, y0: float, x1: float, y1: float) -> str:
     )
 
 
-def _global_label_sexp(name: str, x: float, y: float, rot: int, justify: str) -> str:
+def _local_label_sexp(name: str, x: float, y: float, rot: int, justify: str) -> str:
     uid = new_uuid()
     return (
-        f'\t(global_label "{name}"\n'
-        f'\t\t(shape input)\n'
+        f'\t(label "{name}"\n'
         f'\t\t(at {_fmt(x)} {_fmt(y)} {rot})\n'
         f'\t\t(effects\n'
         f'\t\t\t(font\n'
         f'\t\t\t\t(size {_FONT} {_FONT})\n'
         f'\t\t\t)\n'
-        f'\t\t\t(justify {justify})\n'
+        f'\t\t\t(justify {justify} bottom)\n'
         f'\t\t)\n'
         f'\t\t(uuid "{uid}")\n'
         f'\t)\n'
@@ -295,13 +299,14 @@ def annotate_sch_nets(sch_text: str, netlist_text: str) -> str:
     """Return a schematic with pin stubs + net names. Power keeps global symbols."""
     _comps, nets = parse_netlist(netlist_text)
     lookup = pin_to_net(nets)
+    degree = {n["name"]: len(n["nodes"]) for n in nets}
     if not lookup:
         return sch_text
     libs = parse_libs(sch_text)
     lo, hi = _lib_symbols_range(sch_text)
     text = _strip_local_labels(sch_text)
     wires = _wire_points(text)
-    extras: list[str] = []
+    jobs: list[dict] = []
     for start, end in _top_spans(text, "symbol"):
         if lo <= start < hi:
             continue
@@ -327,22 +332,47 @@ def annotate_sch_nets(sch_text: str, netlist_text: str) -> str:
             lx, ly = _rotate(px, py, irot)
             wx, wy = ix + lx, iy + ly
             wrot = (prot + irot) % 360
-            dx, dy = _stub_delta(wrot)
-            sx, sy = wx + dx, wy + dy
-            if is_power_net(net):
-                if _near_wire(wires, wx, wy):
-                    continue
-                extras.append(_wire_sexp(wx, wy, sx, sy))
-                extras.append(_power_symbol_sexp(net, sx, sy, gnd=net.upper() == "GND" or net.upper() == "VSS"))
+            power = is_power_net(net)
+            if not power and degree.get(net, 0) < 2:
                 continue
-            extras.append(_wire_sexp(wx, wy, sx, sy))
-            rot, just = _label_rot(dx, dy)
-            extras.append(_global_label_sexp(net, sx, sy, rot, just))
+            jobs.append(
+                {
+                    "ref": ref,
+                    "net": net,
+                    "wx": wx,
+                    "wy": wy,
+                    "wrot": wrot,
+                    "power": power,
+                    "skip_power": power and _near_wire(wires, wx, wy),
+                }
+            )
+    columns: dict[tuple, list[dict]] = defaultdict(list)
+    for job in jobs:
+        if job["power"]:
+            continue
+        columns[(job["ref"], int(round(job["wrot"] / 90)) % 4)].append(job)
+    for group in columns.values():
+        group.sort(key=lambda j: (round(j["wy"], 2), round(j["wx"], 2)))
+        for i, job in enumerate(group):
+            job["length"] = _STUB_SHORT if i % 2 == 0 else _STUB_LONG
+    extras: list[str] = []
+    for job in jobs:
+        if job.get("skip_power"):
+            continue
+        length = job.get("length", _STUB_SHORT)
+        dx, dy = _stub_delta(job["wrot"], length)
+        sx, sy = job["wx"] + dx, job["wy"] + dy
+        extras.append(_wire_sexp(job["wx"], job["wy"], sx, sy))
+        if job["power"]:
+            gnd = job["net"].upper() in ("GND", "VSS")
+            extras.append(_power_symbol_sexp(job["net"], sx, sy, gnd=gnd))
+            continue
+        rot, just = _label_rot(dx, dy)
+        extras.append(_local_label_sexp(job["net"], sx, sy, rot, just))
     if not extras:
         return text
     if not text.endswith("\n"):
         text += "\n"
-    # Insert before the closing paren of kicad_sch.
     close = text.rstrip()
     if not close.endswith(")"):
         return text + "".join(extras)
