@@ -418,6 +418,45 @@ def _export_glb(cli: Path, pcb: Path, out: Path) -> dict:
     )
 
 
+_PATH_XY = re.compile(r"[ML]\s*([0-9.+-]+)\s+([0-9.+-]+)")
+_ATTR_XY = re.compile(r'\bx="([0-9.+-]+)"\s+y="([0-9.+-]+)"')
+
+
+def crop_svg_to_content(svg: str, *, pad_mm: float = 10.0, px_per_mm: float = 10.0) -> str:
+    """Fit the SVG to the drawn circuit and size it so 1.27 mm labels stay readable.
+
+    kicad-cli plots the whole A1 sheet. ``.plot svg { width:100% }`` then shrinks
+    that sheet into the review panel, so net labels (opacity-0 ``<text>`` plus
+    0.15 mm stroked paths) vanish. Crop the viewBox and set a pixel width.
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+    for m in _PATH_XY.finditer(svg):
+        x, y = float(m.group(1)), float(m.group(2))
+        if 2.0 < x < 2000 and 2.0 < y < 2000:
+            xs.append(x)
+            ys.append(y)
+    for m in _ATTR_XY.finditer(svg):
+        x, y = float(m.group(1)), float(m.group(2))
+        if 2.0 < x < 2000 and 2.0 < y < 2000:
+            xs.append(x)
+            ys.append(y)
+    if len(xs) < 4:
+        return svg
+    x0, y0 = min(xs) - pad_mm, min(ys) - pad_mm
+    x1, y1 = max(xs) + pad_mm, max(ys) + pad_mm
+    w, h = max(x1 - x0, 20.0), max(y1 - y0, 20.0)
+    out = re.sub(
+        r'viewBox="[^"]+"',
+        f'viewBox="{x0:.3f} {y0:.3f} {w:.3f} {h:.3f}"',
+        svg,
+        count=1,
+    )
+    out = re.sub(r'\bwidth="[^"]+"', f'width="{w * px_per_mm:.0f}px"', out, count=1)
+    out = re.sub(r'\bheight="[^"]+"', f'height="{h * px_per_mm:.0f}px"', out, count=1)
+    return out
+
+
 def _export_sch_svg(cli: Path, sch: Path, out_dir: Path) -> dict:
     return _run(
         [
@@ -538,6 +577,10 @@ def render_html(
     overflow: auto; max-height: 78vh; padding: 8px;
   }}
   .plot svg {{ display: block; width: 100%; height: auto; }}
+  /* KiCad schematic SVG is dark strokes on a transparent sheet. Fit-to-width
+     made 1.27 mm labels ~2 px. Light paper + intrinsic pixel size + scroll. */
+  .plot.sch {{ background: #f4f0e4; }}
+  .plot.sch svg {{ width: auto; max-width: none; height: auto; }}
   .zen {{
     background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
     padding: 14px; overflow: auto; max-height: 78vh; font: 12px/1.4 ui-monospace, Menlo, monospace;
@@ -665,7 +708,10 @@ def review_job(
             steps.append(_export_sch_svg(cli, sch_path, sch_dir))
         svgs = sorted(sch_dir.glob("*.svg")) if sch_dir.exists() else []
         if svgs:
-            sch_svg_text = svgs[0].read_text(errors="replace")
+            raw = svgs[0].read_text(errors="replace")
+            sch_svg_text = crop_svg_to_content(raw)
+            if sch_svg_text != raw:
+                svgs[0].write_text(sch_svg_text)
 
     def _svg(p: Path) -> str | None:
         return p.read_text(errors="replace") if p.exists() and p.stat().st_size > 80 else None

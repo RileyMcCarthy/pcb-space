@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from pcb_space.review import (
+    crop_svg_to_content,
     kicad10_box_symbol,
     parse_netlist,
     parse_symbol_ports,
@@ -79,6 +80,41 @@ def test_mirror_flag_is_not_the_output_path():
     assert cmd[cmd.index("-o") + 1] == "back.svg"
     assert "--mirror" in cmd
     assert cmd.index("--mirror") < cmd.index("-o")
+
+
+def test_crop_svg_sets_pixel_size_and_viewbox():
+    svg = (
+        '<svg width="840mm" height="594mm" viewBox="0 0 840 594">'
+        '<path d="M 100 80 L 200 80 L 200 180 L 100 180 Z"/>'
+        '<text x="120.0" y="90.0">SPI_CLK</text>'
+        "</svg>"
+    )
+    out = crop_svg_to_content(svg, pad_mm=10, px_per_mm=10)
+    assert 'viewBox="90.000 70.000' in out
+    assert "px" in out
+    assert "840mm" not in out.split("viewBox")[0]
+
+
+def test_html_schematic_plot_does_not_shrink_svg():
+    page = render_html(
+        title="c3_usb",
+        board_mm=(40.0, 30.0),
+        layers=2,
+        stackup="jlcpcb_2l_1oz",
+        pcb_name="layout.kicad_pcb",
+        zen_text=None,
+        sch_svg="<svg></svg>",
+        net_svg="<svg></svg>",
+        front_svg=None,
+        back_svg=None,
+        copper_svg=None,
+        silk_svg=None,
+        glb_b64=None,
+        bom_rows=[],
+        notes=[],
+    )
+    assert ".plot.sch svg" in page
+    assert "max-width: none" in page
 
 
 def test_html_has_review_tabs():
