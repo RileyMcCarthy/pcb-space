@@ -4,6 +4,7 @@ from pcb_space.sch_nets import (
     parse_lib_pins,
     pin_to_net,
     spread_symbols,
+    _delete_long_wires,
 )
 
 SCH = """(kicad_sch
@@ -271,6 +272,20 @@ def test_parse_lib_pins_reads_connection_point():
     )
     assert "1" in pins
     assert pins["1"][0] == -3.81
+
+
+def test_delete_long_wires_drops_power_buses():
+    sch = SCH.rstrip()[:-1] + (
+        "\t(wire\n"
+        "\t\t(pts\n"
+        "\t\t\t(xy 50 50) (xy 200 200)\n"
+        "\t\t)\n"
+        '\t\t(uuid "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")\n'
+        "\t)\n"
+        ")\n"
+    )
+    out = _delete_long_wires(sch, 16.0)
+    assert "(xy 200 200)" not in out
 
 
 def test_spread_symbols_separates_close_ics():

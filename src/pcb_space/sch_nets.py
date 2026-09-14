@@ -610,11 +610,41 @@ def _shift_ats(block: str, dx: float, dy: float) -> str:
     )
 
 
+def _endpoint_move(
+    x: float, y: float, moves: list[tuple[float, float, float, float]], tol: float = 0.4
+) -> tuple[float, float] | None:
+    for ox, oy, dx, dy in moves:
+        if abs(x - ox) <= tol and abs(y - oy) <= tol:
+            return (dx, dy)
+    return None
+
+
 def _shift_wire_endpoints(
     text: str, moves: list[tuple[float, float, float, float]], tol: float = 0.4
 ) -> str:
+    """Translate pin-local wires. Drop a wire if its ends belong to two parts
+    (those become the long green power buses after a spread)."""
     lo, hi = _lib_symbols_range(text)
     reps: list[tuple[int, int, str]] = []
+    drops: list[tuple[int, int]] = []
+    for start, end in _top_spans(text, "wire"):
+        if lo <= start < hi:
+            continue
+        block = text[start:end]
+        pts = [(float(x), float(y)) for x, y in _WIRE_XY.findall(block)]
+        if len(pts) < 2:
+            continue
+        t0 = _endpoint_move(pts[0][0], pts[0][1], moves, tol)
+        t1 = _endpoint_move(pts[1][0], pts[1][1], moves, tol)
+        if (
+            t0
+            and t1
+            and (abs(t0[0] - t1[0]) > 0.3 or abs(t0[1] - t1[1]) > 0.3)
+        ):
+            drops.append((start, end))
+    text = _drop_spans(text, drops)
+    lo, hi = _lib_symbols_range(text)
+    reps = []
     for start, end in _top_spans(text, "wire"):
         if lo <= start < hi:
             continue
@@ -622,10 +652,10 @@ def _shift_wire_endpoints(
 
         def repl(m: re.Match) -> str:
             x, y = float(m.group(1)), float(m.group(2))
-            for ox, oy, dx, dy in moves:
-                if abs(x - ox) <= tol and abs(y - oy) <= tol:
-                    return f"(xy {_fmt(x + dx)} {_fmt(y + dy)})"
-            return m.group(0)
+            t = _endpoint_move(x, y, moves, tol)
+            if t is None:
+                return m.group(0)
+            return f"(xy {_fmt(x + t[0])} {_fmt(y + t[1])})"
 
         new = re.sub(r"\(xy ([0-9.+-]+) ([0-9.+-]+)\)", repl, block)
         if new != block:
@@ -633,6 +663,95 @@ def _shift_wire_endpoints(
     for start, end, new in sorted(reps, reverse=True):
         text = text[:start] + new + text[end:]
     return text
+
+
+def _drop_spans(text: str, spans: list[tuple[int, int]]) -> str:
+    if not spans:
+        return text
+    lo, hi = _lib_symbols_range(text)
+    pieces: list[str] = []
+    last = 0
+    for start, end in sorted(spans):
+        if lo <= start < hi:
+            continue
+        prefix = start
+        while prefix > last and text[prefix - 1] in " \t":
+            prefix -= 1
+        if prefix > last and text[prefix - 1] == "\n":
+            prefix -= 1
+        pieces.append(text[last:prefix])
+        last = end
+        if last < len(text) and text[last] == "\n":
+            last += 1
+    pieces.append(text[last:])
+    return "".join(pieces)
+
+
+def _delete_long_wires(text: str, max_mm: float = 16.0) -> str:
+    """Zener power buses are long; per-pin GND/VCC stubs are short."""
+    lo, hi = _lib_symbols_range(text)
+    drops: list[tuple[int, int]] = []
+    for start, end in _top_spans(text, "wire"):
+        if lo <= start < hi:
+            continue
+        pts = [(float(x), float(y)) for x, y in _WIRE_XY.findall(text[start:end])]
+        if len(pts) < 2:
+            continue
+        if math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) > max_mm:
+            drops.append((start, end))
+    return _drop_spans(text, drops)
+
+
+def _ensure_local_power(text: str, netlist_text: str) -> str:
+    """Every power pin gets a short local GND/VCC hat — never a sheet-long bus."""
+    _comps, nets = parse_netlist(netlist_text)
+    lookup = pin_to_net(nets)
+    libs = parse_libs(text)
+    lo, hi = _lib_symbols_range(text)
+    hats: list[tuple[float, float]] = []
+    for start, end in _top_spans(text, "symbol"):
+        if lo <= start < hi:
+            continue
+        block = text[start:end]
+        lib_m = _LIB_ID.search(block)
+        at_m = _INST_AT.search(block)
+        if lib_m and at_m and lib_m.group(1) in ("GND", "VCC"):
+            hats.append((float(at_m.group(1)), float(at_m.group(2))))
+    extras: list[str] = []
+    for start, end in _top_spans(text, "symbol"):
+        if lo <= start < hi:
+            continue
+        block = text[start:end]
+        lib_m = _LIB_ID.search(block)
+        ref_m = _REF.search(block)
+        at_m = _INST_AT.search(block)
+        if not lib_m or not ref_m or not at_m:
+            continue
+        lib_id, ref = lib_m.group(1), ref_m.group(1)
+        if ref.startswith("#PWR") or lib_id in ("GND", "VCC"):
+            continue
+        pins = libs.get(lib_id) or {}
+        ix, iy = float(at_m.group(1)), float(at_m.group(2))
+        irot = float(at_m.group(3) or 0)
+        for pnum, (px, py, _prot) in pins.items():
+            net = lookup.get((ref, pnum))
+            if not net or not is_power_net(net):
+                continue
+            lx, ly = _rotate(px, py, irot)
+            wx, wy = ix + lx, iy + ly
+            if any(math.hypot(wx - hx, wy - hy) < 9.0 for hx, hy in hats):
+                continue
+            gnd = net.upper() in ("GND", "VSS")
+            sx, sy = wx, wy + (5.08 if gnd else -5.08)
+            extras.append(_wire_sexp(wx, wy, sx, sy))
+            extras.append(_power_symbol_sexp(net, sx, sy, gnd=gnd))
+            hats.append((sx, sy))
+    if not extras:
+        return text
+    close = text.rstrip()
+    if not close.endswith(")"):
+        return text + "".join(extras)
+    return close[:-1] + "\n" + "".join(extras) + ")\n"
 
 
 def spread_symbols(text: str) -> str:
@@ -737,9 +856,12 @@ def annotate_sch_file(sch_path: Path, netlist_path: Path) -> bool:
     netlist_path = Path(netlist_path)
     if not sch_path.exists() or not netlist_path.exists():
         return False
-    text = spread_symbols(sch_path.read_text())
-    new = annotate_sch_nets(text, netlist_path.read_text())
-    if new == sch_path.read_text():
+    raw = sch_path.read_text()
+    text = spread_symbols(raw)
+    text = _delete_long_wires(text)
+    text = annotate_sch_nets(text, netlist_path.read_text())
+    new = _ensure_local_power(text, netlist_path.read_text())
+    if new == raw:
         return False
     sch_path.write_text(new)
     return True

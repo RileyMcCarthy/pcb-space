@@ -256,6 +256,8 @@ def export_zener_schematic(zen: Path, out_dir: Path, cli: Path) -> tuple[Path | 
     if net_path is not None:
         annotate_sch_file(dest_sch, net_path)
         shutil.copy2(dest_sch, sch)
+    for old in sch_dir.glob("*.svg"):
+        old.unlink()
     steps.append(_export_sch_svg(cli, dest_sch, sch_dir))
     pdf = out_dir / "schematic.pdf"
     steps.append(
@@ -707,8 +709,10 @@ def review_job(
         steps.append(_export_svg(cli, plot_pcb, copper, "F.Cu,B.Cu,Edge.Cuts"))
         steps.append(_export_glb(cli, pcb, glb))
         sch_dir = out_dir / "sch"
-        if sch_path and not list(sch_dir.glob("*.svg")):
+        if sch_path:
             sch_dir.mkdir(exist_ok=True)
+            for old in sch_dir.glob("*.svg"):
+                old.unlink()
             steps.append(_export_sch_svg(cli, sch_path, sch_dir))
         svgs = sorted(sch_dir.glob("*.svg")) if sch_dir.exists() else []
         if svgs:
