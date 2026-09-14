@@ -6,9 +6,9 @@ rewriter:
 
 - ICs/connectors only (skip R/C/L — those already have GND/VCC symbols)
 - hide on-box pin names so they do not fight the net labels
-- signal nets (2+ pins): stub + local ``label``, packed on a side rail
-  with 2.54 mm pitch and two-column stagger, then pushed off any
-  overlapping symbol body or other label
+- signal nets (2+ pins): a straight stub as long as the name, with the
+  local label sitting on the wire (underlined), not beside it
+- stubs that would hit another symbol or label are pushed out or skipped
 - unused one-pin nets are left unlabeled
 - power nets: keep existing GND/VCC symbols
 """
@@ -69,11 +69,9 @@ _POWER_NETS = {
     "DVDD1",
     "DVDD2",
 }
-_STUB_SHORT = 5.08
-_STUB_LONG = 12.70
+_STUB_MIN = 5.08
 _FONT = 1.27
-_PITCH = 2.54
-_CHAR_W = 0.85
+_CHAR_W = 0.95
 _PASSIVE_REF = re.compile(r"^[RCL]\d")
 _RECT = re.compile(
     r"\(rectangle\s+\(start\s+([0-9.+-]+)\s+([0-9.+-]+)\)\s+\(end\s+([0-9.+-]+)\s+([0-9.+-]+)\)",
@@ -359,14 +357,19 @@ def _stub_delta(world_rot: float, length: float) -> tuple[float, float]:
     return (-length * math.cos(rad), -length * math.sin(rad))
 
 
-def _label_rot(dx: float, dy: float) -> tuple[int, str]:
+def _text_width(name: str) -> float:
+    return max(len(name), 1) * _FONT * _CHAR_W
+
+
+def _underline_pose(dx: float, dy: float) -> tuple[int, str]:
+    """Label at the far end of the stub; text runs back along the wire toward the pin."""
     if abs(dx) >= abs(dy):
-        if dx >= 0:
+        if dx < 0:
             return 0, "left"
-        return 180, "right"
-    if dy >= 0:
+        return 180, "left"
+    if dy < 0:
         return 90, "left"
-    return 270, "right"
+    return 270, "left"
 
 
 def _fmt(n: float) -> str:
@@ -442,53 +445,41 @@ def _pack_signal_jobs(
     jobs: list[dict],
     obstacles: list[tuple[str, tuple[float, float, float, float]]],
 ) -> None:
-    """Assign stub length + label y so names do not stack or hit other bodies."""
+    """Straight stub as long as the name; label sits on the wire."""
+    placed: list[tuple[float, float, float, float]] = []
     columns: dict[tuple, list[dict]] = defaultdict(list)
     for job in jobs:
         if job["power"]:
             continue
         columns[(job["ref"], int(round(job["wrot"] / 90)) % 4)].append(job)
-    placed: list[tuple[float, float, float, float]] = []
     for group in columns.values():
         group.sort(key=lambda j: (round(j["wy"], 2), round(j["wx"], 2)))
-        prev_y: float | None = None
-        for i, job in enumerate(group):
-            length = _STUB_SHORT if i % 2 == 0 else _STUB_LONG
-            ly = job["wy"]
-            if prev_y is not None and abs(ly - prev_y) < _PITCH:
-                ly = prev_y + (_PITCH if ly >= prev_y else -_PITCH)
-            rot = int(round(job["wrot"] / 90)) % 4
-            # Push the rail out until the label misses other symbols and labels.
-            for _ in range(16):
+        for job in group:
+            tw = _text_width(job["net"])
+            extra = 0.0
+            placed_ok = False
+            for _ in range(14):
+                length = max(_STUB_MIN, tw) + extra
                 dx, dy = _stub_delta(job["wrot"], length)
                 sx, sy = job["wx"] + dx, job["wy"] + dy
-                # Keep the label on a straight stub; if we had to separate Y,
-                # the wire will jog (pin → (sx, wy) → (sx, ly)).
-                lx, ly_use = sx, ly if abs(dx) >= abs(dy) else sy
-                if abs(dx) < abs(dy):
-                    lx, ly_use = sx, sy
-                lrot, _just = _label_rot(dx, dy)
-                box = _label_box(job["net"], lx, ly_use, lrot)
+                rot, just = _underline_pose(dx, dy)
+                box = _label_box(job["net"], sx, sy, rot)
                 hit = any(_boxes_overlap(box, other) for other in placed)
                 hit = hit or any(
                     ref != job["ref"] and _boxes_overlap(box, body)
                     for ref, body in obstacles
                 )
                 if not hit:
-                    job["length"] = length
-                    job["lx"] = lx
-                    job["ly"] = ly_use
+                    job["lx"] = sx
+                    job["ly"] = sy
+                    job["lrot"] = rot
+                    job["ljust"] = just
                     placed.append(box)
-                    prev_y = ly_use if abs(dx) >= abs(dy) else prev_y
+                    placed_ok = True
                     break
-                length += 2.54
-            else:
-                dx, dy = _stub_delta(job["wrot"], length)
-                job["length"] = length
-                job["lx"] = job["wx"] + dx
-                job["ly"] = ly if abs(dx) >= abs(dy) else job["wy"] + dy
-                placed.append(_label_box(job["net"], job["lx"], job["ly"], _label_rot(dx, dy)[0]))
-                prev_y = job["ly"]
+                extra += 2.54
+            if not placed_ok:
+                job["skip"] = True
 
 
 def annotate_sch_nets(sch_text: str, netlist_text: str) -> str:
@@ -550,8 +541,10 @@ def annotate_sch_nets(sch_text: str, netlist_text: str) -> str:
     for job in jobs:
         if job.get("skip_power"):
             continue
+        if job.get("skip"):
+            continue
         if job["power"]:
-            dx, dy = _stub_delta(job["wrot"], _STUB_SHORT)
+            dx, dy = _stub_delta(job["wrot"], _STUB_MIN)
             sx, sy = job["wx"] + dx, job["wy"] + dy
             extras.append(_wire_sexp(job["wx"], job["wy"], sx, sy))
             gnd = job["net"].upper() in ("GND", "VSS")
@@ -560,16 +553,13 @@ def annotate_sch_nets(sch_text: str, netlist_text: str) -> str:
         lx = job.get("lx")
         ly = job.get("ly")
         if lx is None:
-            dx, dy = _stub_delta(job["wrot"], job.get("length", _STUB_SHORT))
+            tw = _text_width(job["net"])
+            dx, dy = _stub_delta(job["wrot"], max(_STUB_MIN, tw))
             lx, ly = job["wx"] + dx, job["wy"] + dy
-        # Jog if the packed label is not on the pin's stub line.
-        if abs(lx - job["wx"]) > 0.2 and abs(ly - job["wy"]) > 0.2:
-            extras.append(_wire_sexp(job["wx"], job["wy"], lx, job["wy"]))
-            extras.append(_wire_sexp(lx, job["wy"], lx, ly))
+            rot, just = _underline_pose(dx, dy)
         else:
-            extras.append(_wire_sexp(job["wx"], job["wy"], lx, ly))
-        dx, dy = lx - job["wx"], ly - job["wy"]
-        rot, just = _label_rot(dx, dy)
+            rot, just = job.get("lrot", 0), job.get("ljust", "left")
+        extras.append(_wire_sexp(job["wx"], job["wy"], lx, ly))
         extras.append(_local_label_sexp(job["net"], lx, ly, rot, just))
     if not extras:
         return text

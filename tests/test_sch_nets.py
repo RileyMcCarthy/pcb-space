@@ -136,6 +136,35 @@ def test_annotate_replaces_on_pin_label_with_stub_and_local_label():
     assert '(property "Value" "GND"' in out
 
 
+def test_label_is_on_the_wire_not_beside_it():
+    import re
+    from pcb_space.sch_nets import _text_width
+
+    out = annotate_sch_nets(SCH, NET)
+    # Pin 1 is at (46.19, 50), stub goes left. Label is at the far end;
+    # wire runs from the pin to that end and is at least the name wide.
+    lm = re.search(
+        r'\(label "SPI_CLK"\n\t\t\(at ([0-9.+-]+) ([0-9.+-]+)',
+        out,
+    )
+    assert lm
+    lx, ly = float(lm.group(1)), float(lm.group(2))
+    assert abs(ly - 50) < 0.2
+    pin_x = 50 - 3.81
+    assert lx < pin_x - _text_width("SPI_CLK") + 0.5
+    wires = re.findall(
+        r"\(xy ([0-9.+-]+) ([0-9.+-]+)\) \(xy ([0-9.+-]+) ([0-9.+-]+)\)",
+        out,
+    )
+    aligned = False
+    for x0, y0, x1, y1 in wires:
+        xs, ys = sorted((float(x0), float(x1))), sorted((float(y0), float(y1)))
+        if ys[0] <= ly <= ys[1] + 0.2 and xs[0] - 0.2 <= lx <= xs[1] + 0.2:
+            aligned = True
+            assert (xs[1] - xs[0]) + 0.2 >= _text_width("SPI_CLK")
+    assert aligned
+
+
 def test_annotate_skips_power_when_wire_already_there():
     sch = SCH.replace(
         "\t(label",
