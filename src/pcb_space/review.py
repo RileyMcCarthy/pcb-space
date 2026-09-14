@@ -101,6 +101,10 @@ def kicad10_box_symbol(name: str, ports: list[tuple[str, str]], ref: str = "U") 
         '\t(generator "pcb-space")\n'
         '\t(generator_version "10.0")\n'
         f'\t(symbol "{name}"\n'
+        "\t\t(pin_names\n"
+        "\t\t\t(offset 1.016)\n"
+        "\t\t\t(hide no)\n"
+        "\t\t)\n"
         "\t\t(exclude_from_sim no)\n"
         "\t\t(in_bom yes)\n"
         "\t\t(on_board yes)\n"

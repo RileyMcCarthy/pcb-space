@@ -5,7 +5,7 @@ A1-page zoom) and only draws wires for Power()/Ground() symbols. This
 rewriter:
 
 - ICs/connectors only (skip R/C/L — those already have GND/VCC symbols)
-- hide on-box pin names so they do not fight the net labels
+- pin names stay visible inside the box (IN1, VM, …); net names stay on the stubs
 - signal nets (2+ pins): a straight stub as long as the name, with the
   local label sitting on the wire (underlined), not beside it
 - stubs that would hit another symbol or label are pushed out or skipped
@@ -253,16 +253,23 @@ def _near_wire(pts: set[tuple[float, float]], x: float, y: float, tol: float = 0
     return False
 
 
-def _hide_lib_pin_names(text: str) -> str:
-    """Stop on-box pin names (VIN, D0, …) from colliding with net labels."""
+_PIN_NAMES_SHOW = (
+    "(pin_names\n"
+    "\t\t\t\t(offset 1.016)\n"
+    "\t\t\t\t(hide no)\n"
+    "\t\t\t)"
+)
+
+
+def _show_lib_pin_names(text: str) -> str:
+    """Draw pin names (IN1, VM, …) inside the box. Power symbols stay nameless."""
     lo, hi = _lib_symbols_range(text)
     if lo < 0:
         return text
     body = text[lo:hi]
-    skip = {"GND", "VCC", "R_Small", "C_Small"}
+    skip = {"GND", "VCC"}
     pos = 0
-    chunks: list[str] = []
-    last = 0
+    chunks: list[tuple[int, int, str]] = []
     while True:
         j = body.find("\n\t\t(symbol ", pos)
         if j < 0:
@@ -274,23 +281,13 @@ def _hide_lib_pin_names(text: str) -> str:
         m = re.match(r'\(symbol "([^"]+)"', block)
         if not m or m.group(1) in skip:
             continue
-        if "(pin_names" in block:
-            new = re.sub(
-                r"\(pin_names\b[^)]*\)",
-                "(pin_names\n\t\t\t\t(offset 0.508)\n\t\t\t\t(hide yes)\n\t\t\t)",
-                block,
-                count=1,
-            )
-            if new == block:
-                new = block.replace(
-                    "(pin_names",
-                    "(pin_names\n\t\t\t\t(hide yes)",
-                    1,
-                )
+        jn = block.find("(pin_names")
+        if jn >= 0:
+            kn = matching_paren(block, jn)
+            new = block[:jn] + _PIN_NAMES_SHOW + block[kn + 1 :]
         else:
-            insert = "\n\t\t\t(pin_names\n\t\t\t\t(offset 0.508)\n\t\t\t\t(hide yes)\n\t\t\t)"
             nl = block.find("\n", 8)
-            new = block[:nl] + insert + block[nl:] if nl > 0 else block
+            new = block[:nl] + "\n\t\t\t" + _PIN_NAMES_SHOW + block[nl:] if nl > 0 else block
         if new != block:
             chunks.append((open_at, end + 1, new))
     if not chunks:
@@ -499,7 +496,7 @@ def annotate_sch_nets(sch_text: str, netlist_text: str) -> str:
     degree = {n["name"]: len(n["nodes"]) for n in nets}
     if not lookup:
         return sch_text
-    text = _hide_lib_pin_names(sch_text)
+    text = _show_lib_pin_names(sch_text)
     libs = parse_libs(text)
     bodies = parse_lib_bodies(text)
     obstacles = _instance_bodies(text, bodies)

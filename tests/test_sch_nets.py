@@ -314,6 +314,12 @@ def test_spread_symbols_separates_close_ics():
     assert xs[1] - xs[0] > 50.0
 
 
+def test_pin_names_are_shown_inside_the_box():
+    out = annotate_sch_nets(SCH, NET)
+    assert "(hide no)" in out
+    assert "(offset 1.016)" in out
+
+
 def test_passives_are_not_labeled():
     from pcb_space.sch_nets import _is_passive
 
