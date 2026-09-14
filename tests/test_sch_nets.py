@@ -8,12 +8,20 @@ from pcb_space.sch_nets import (
 SCH = """(kicad_sch
 	(version 20260306)
 	(lib_symbols
-		(symbol "R_Small"
-			(property "Reference" "R"
+		(symbol "IC"
+			(property "Reference" "U"
 				(at 0 0 0)
 				(effects (font (size 1.27 1.27)))
 			)
-			(symbol "R_Small_1_1"
+			(symbol "IC_0_1"
+				(rectangle
+					(start -2.54 2.54)
+					(end 2.54 -2.54)
+					(stroke (width 0.254) (type default))
+					(fill (type background))
+				)
+			)
+			(symbol "IC_1_1"
 				(pin unspecified line
 					(at -3.81 0 0)
 					(length 2.54)
@@ -57,10 +65,10 @@ SCH = """(kicad_sch
 		)
 	)
 	(symbol
-		(lib_id "R_Small")
+		(lib_id "IC")
 		(at 50 50 0)
 		(uuid "11111111-1111-1111-1111-111111111111")
-		(property "Reference" "R1"
+		(property "Reference" "U1"
 			(at 50 50 0)
 			(effects (font (size 1.27 1.27)))
 		)
@@ -86,15 +94,15 @@ SCH = """(kicad_sch
 
 NET = """(export (version "E")
   (components
-    (comp (ref "R1") (value "10k") (footprint "R_0603"))
+    (comp (ref "U1") (value "IC") (footprint "SOIC"))
   )
   (nets
     (net (code "1") (name "SPI_CLK")
-      (node (ref "R1") (pin "1"))
-      (node (ref "U1") (pin "5"))
+      (node (ref "U1") (pin "1"))
+      (node (ref "U2") (pin "5"))
     )
     (net (code "2") (name "GND")
-      (node (ref "R1") (pin "2"))
+      (node (ref "U1") (pin "2"))
     )
   )
 )
@@ -114,8 +122,8 @@ def test_pin_to_net_maps_ref_pin():
 
     _c, nets = parse_netlist(NET)
     lookup = pin_to_net(nets)
-    assert lookup[("R1", "1")] == "SPI_CLK"
-    assert lookup[("R1", "2")] == "GND"
+    assert lookup[("U1", "1")] == "SPI_CLK"
+    assert lookup[("U1", "2")] == "GND"
 
 
 def test_annotate_replaces_on_pin_label_with_stub_and_local_label():
@@ -146,14 +154,14 @@ def test_annotate_skips_power_when_wire_already_there():
 def test_one_pin_nets_are_not_labeled():
     net = """(export (version "E")
   (components
-    (comp (ref "R1") (value "10k") (footprint "R_0603"))
+    (comp (ref "U1") (value "IC") (footprint "SOIC"))
   )
   (nets
     (net (code "1") (name "A1.D0")
-      (node (ref "R1") (pin "1"))
+      (node (ref "U1") (pin "1"))
     )
     (net (code "2") (name "GND")
-      (node (ref "R1") (pin "2"))
+      (node (ref "U1") (pin "2"))
     )
   )
 )
@@ -181,8 +189,8 @@ def test_stagger_adjacent_stubs():
     )
     # Both signal pins on the left: 1 at y=50, 2 at y=47.46
     net = NET.replace(
-        '(node (ref "R1") (pin "2"))',
-        '(node (ref "R1") (pin "2"))\n      (node (ref "U2") (pin "1"))',
+        '(node (ref "U1") (pin "2"))',
+        '(node (ref "U1") (pin "2"))\n      (node (ref "U3") (pin "1"))',
     ).replace(
         '(name "GND")',
         '(name "SPI_CS")',
@@ -209,3 +217,14 @@ def test_parse_lib_pins_reads_connection_point():
     )
     assert "1" in pins
     assert pins["1"][0] == -3.81
+
+
+def test_passives_are_not_labeled():
+    from pcb_space.sch_nets import _is_passive
+
+    assert _is_passive("R1")
+    assert _is_passive("C12")
+    assert _is_passive("L9")
+    assert not _is_passive("U1")
+    assert not _is_passive("A1")
+    assert not _is_passive("J9")
