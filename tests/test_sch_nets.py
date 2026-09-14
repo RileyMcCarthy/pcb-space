@@ -3,6 +3,7 @@ from pcb_space.sch_nets import (
     is_power_net,
     parse_lib_pins,
     pin_to_net,
+    spread_symbols,
 )
 
 SCH = """(kicad_sch
@@ -270,6 +271,47 @@ def test_parse_lib_pins_reads_connection_point():
     )
     assert "1" in pins
     assert pins["1"][0] == -3.81
+
+
+def test_spread_symbols_separates_close_ics():
+    sch = SCH.replace(
+        "\t(label",
+        """	(symbol
+		(lib_id "IC")
+		(at 70 50 0)
+		(uuid "22222222-2222-2222-2222-222222222222")
+		(property "Reference" "U2"
+			(at 70 50 0)
+			(effects (font (size 1.27 1.27)))
+		)
+		(pin "1"
+			(uuid "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+		)
+		(pin "2"
+			(uuid "ffffffffffffffffffffffffffffffffffffffff")
+		)
+	)
+	(label""",
+    )
+    out = spread_symbols(sch)
+    import re
+
+    ats = {
+        m.group(1): (float(m.group(2)), float(m.group(3)))
+        for m in re.finditer(
+            r'\(property "Reference" "(U[12])"\n\t\t\t\(at ([0-9.+-]+) ([0-9.+-]+)',
+            out,
+        )
+    }
+    # Prefer instance (at) which is the first (at) after lib_id
+    inst = re.findall(
+        r'\(lib_id "IC"\)\n\t\t\(at ([0-9.+-]+) ([0-9.+-]+)',
+        out,
+    )
+    assert len(inst) == 2
+    xs = sorted(float(x) for x, _y in inst)
+    # Each IC half-width ~3.81 plus 26 mm label margin each side.
+    assert xs[1] - xs[0] > 50.0
 
 
 def test_passives_are_not_labeled():

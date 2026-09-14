@@ -11,6 +11,8 @@ rewriter:
 - stubs that would hit another symbol or label are pushed out or skipped
 - unused one-pin nets are left unlabeled
 - power nets: keep existing GND/VCC symbols
+- before labels, re-pack symbols by row with room for stubs and GND hats
+  so wires, labels, and bodies do not sit on top of each other
 """
 
 from __future__ import annotations
@@ -579,12 +581,167 @@ def annotate_sch_nets(sch_text: str, netlist_text: str) -> str:
     return close[:-1] + "\n" + "".join(extras) + ")\n"
 
 
+def _half_size(
+    lib_id: str,
+    libs: dict,
+    bodies: dict[str, tuple[float, float, float, float] | None],
+) -> tuple[float, float]:
+    xs: list[float] = []
+    ys: list[float] = []
+    box = bodies.get(lib_id)
+    if box:
+        xs.extend((box[0], box[2]))
+        ys.extend((box[1], box[3]))
+    for px, py, _pr in (libs.get(lib_id) or {}).values():
+        xs.append(px)
+        ys.append(py)
+    if not xs:
+        return 8.0, 6.0
+    return max(abs(min(xs)), abs(max(xs)), 4.0), max(abs(min(ys)), abs(max(ys)), 3.0)
+
+
+def _shift_ats(block: str, dx: float, dy: float) -> str:
+    def repl(m: re.Match) -> str:
+        x, y = float(m.group(1)) + dx, float(m.group(2)) + dy
+        rot = f" {m.group(3)}" if m.group(3) else ""
+        return f"(at {_fmt(x)} {_fmt(y)}{rot})"
+
+    return re.sub(
+        r"\(at ([0-9.+-]+) ([0-9.+-]+)(?: ([0-9.+-]+))?\)",
+        repl,
+        block,
+    )
+
+
+def _shift_wire_endpoints(
+    text: str, moves: list[tuple[float, float, float, float]], tol: float = 0.4
+) -> str:
+    lo, hi = _lib_symbols_range(text)
+    reps: list[tuple[int, int, str]] = []
+    for start, end in _top_spans(text, "wire"):
+        if lo <= start < hi:
+            continue
+        block = text[start:end]
+
+        def repl(m: re.Match) -> str:
+            x, y = float(m.group(1)), float(m.group(2))
+            for ox, oy, dx, dy in moves:
+                if abs(x - ox) <= tol and abs(y - oy) <= tol:
+                    return f"(xy {_fmt(x + dx)} {_fmt(y + dy)})"
+            return m.group(0)
+
+        new = re.sub(r"\(xy ([0-9.+-]+) ([0-9.+-]+)\)", repl, block)
+        if new != block:
+            reps.append((start, end, new))
+    for start, end, new in sorted(reps, reverse=True):
+        text = text[:start] + new + text[end:]
+    return text
+
+
+def spread_symbols(text: str) -> str:
+    """Pack symbols so bodies + typical label/GND hats do not overlap.
+
+    Zener auto-layout keeps parts on a tight grid; stubs and power symbols
+    then collide. Re-pack by original rows with type-dependent margins,
+    and drag pin wires / nearby GND-VCC hats with each part.
+    """
+    libs = parse_libs(text)
+    bodies = parse_lib_bodies(text)
+    lo, hi = _lib_symbols_range(text)
+    records: list[dict] = []
+    for start, end in _top_spans(text, "symbol"):
+        if lo <= start < hi:
+            continue
+        block = text[start:end]
+        lib_m = _LIB_ID.search(block)
+        ref_m = _REF.search(block)
+        at_m = _INST_AT.search(block)
+        if not lib_m or not ref_m or not at_m:
+            continue
+        lib_id, ref = lib_m.group(1), ref_m.group(1)
+        if ref.startswith("#PWR") or lib_id in ("GND", "VCC"):
+            continue
+        hw, hh = _half_size(lib_id, libs, bodies)
+        if ref[:1] in "UA":
+            margin = 26.0
+        elif ref[:1] == "J":
+            margin = 18.0
+        else:
+            margin = 9.0
+        records.append(
+            {
+                "start": start,
+                "end": end,
+                "lib": lib_id,
+                "ref": ref,
+                "ix": float(at_m.group(1)),
+                "iy": float(at_m.group(2)),
+                "irot": float(at_m.group(3) or 0),
+                "hw": hw,
+                "hh": hh,
+                "margin": margin,
+            }
+        )
+    if not records:
+        return text
+    rows: dict[float, list[dict]] = defaultdict(list)
+    for rec in records:
+        rows[round(rec["iy"] / 5.0) * 5.0].append(rec)
+    y_cursor = 50.0
+    for y_key in sorted(rows):
+        row = sorted(rows[y_key], key=lambda r: r["ix"])
+        row_hh = max(r["hh"] + r["margin"] * 0.4 for r in row)
+        y_cursor += row_hh
+        x_cursor = 50.0
+        for rec in row:
+            need = rec["hw"] + rec["margin"]
+            x_cursor += need
+            rec["nx"] = x_cursor
+            rec["ny"] = y_cursor
+            x_cursor += need + 6.0
+        y_cursor += row_hh + 12.0
+    power: list[tuple[int, int, float, float]] = []
+    for start, end in _top_spans(text, "symbol"):
+        if lo <= start < hi:
+            continue
+        block = text[start:end]
+        lib_m = _LIB_ID.search(block)
+        at_m = _INST_AT.search(block)
+        if lib_m and at_m and lib_m.group(1) in ("GND", "VCC"):
+            power.append((start, end, float(at_m.group(1)), float(at_m.group(2))))
+    moves: list[tuple[float, float, float, float]] = []
+    shifts: list[tuple[int, int, float, float]] = []
+    for rec in records:
+        dx, dy = rec["nx"] - rec["ix"], rec["ny"] - rec["iy"]
+        if abs(dx) < 0.05 and abs(dy) < 0.05:
+            continue
+        shifts.append((rec["start"], rec["end"], dx, dy))
+        pin_pts: list[tuple[float, float]] = []
+        for px, py, _pr in (libs.get(rec["lib"]) or {}).values():
+            lx, ly = _rotate(px, py, rec["irot"])
+            ox, oy = rec["ix"] + lx, rec["iy"] + ly
+            pin_pts.append((ox, oy))
+            moves.append((ox, oy, dx, dy))
+        for ps, pe, pwx, pwy in power:
+            if any((pwx - ox) ** 2 + (pwy - oy) ** 2 <= 16.0**2 for ox, oy in pin_pts):
+                moves.append((pwx, pwy, dx, dy))
+                shifts.append((ps, pe, dx, dy))
+    seen: set[tuple[int, int]] = set()
+    for start, end, dx, dy in sorted(shifts, key=lambda t: t[0], reverse=True):
+        if (start, end) in seen:
+            continue
+        seen.add((start, end))
+        text = text[:start] + _shift_ats(text[start:end], dx, dy) + text[end:]
+    return _shift_wire_endpoints(text, moves)
+
+
 def annotate_sch_file(sch_path: Path, netlist_path: Path) -> bool:
     sch_path = Path(sch_path)
     netlist_path = Path(netlist_path)
     if not sch_path.exists() or not netlist_path.exists():
         return False
-    new = annotate_sch_nets(sch_path.read_text(), netlist_path.read_text())
+    text = spread_symbols(sch_path.read_text())
+    new = annotate_sch_nets(text, netlist_path.read_text())
     if new == sch_path.read_text():
         return False
     sch_path.write_text(new)
