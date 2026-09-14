@@ -161,12 +161,19 @@ def _is_passive(ref: str) -> bool:
     return bool(_PASSIVE_REF.match(ref or ""))
 
 
-def _label_box(name: str, x: float, y: float, rot: int) -> tuple[float, float, float, float]:
+def _label_box(
+    name: str, x: float, y: float, rot: int, justify: str = "left"
+) -> tuple[float, float, float, float]:
     w = max(len(name), 1) * _FONT * _CHAR_W + 0.6
     h = _FONT * 1.45
-    if rot in (0, 90):
-        return (x, y - h, x + w, y + 0.2)
-    return (x - w, y - h, x + 0.2, y + 0.2)
+    if rot == 0:
+        if justify == "left":
+            return (x, y - h, x + w, y + 0.2)
+        return (x - w, y - h, x, y + 0.2)
+    # 90°: readable bottom-to-top. Local +X is world −Y.
+    if justify == "left":
+        return (x - h, y - w, x + 0.2, y)
+    return (x - h, y, x + 0.2, y + w)
 
 
 def _boxes_overlap(
@@ -362,14 +369,15 @@ def _text_width(name: str) -> float:
 
 
 def _underline_pose(dx: float, dy: float) -> tuple[int, str]:
-    """Label at the far end of the stub; text runs back along the wire toward the pin."""
+    """Label at the far end of the stub; text runs back along the wire, upright.
+
+    Never use 180°/270° — those flip the glyphs off the wire. Horizontal
+    names stay at 0°; vertical names stay at 90°. Justify picks the side
+    so the string sits on the stub toward the pin.
+    """
     if abs(dx) >= abs(dy):
-        if dx < 0:
-            return 0, "left"
-        return 180, "left"
-    if dy < 0:
-        return 90, "left"
-    return 270, "left"
+        return 0, "left" if dx < 0 else "right"
+    return 90, "left" if dy > 0 else "right"
 
 
 def _fmt(n: float) -> str:
@@ -463,7 +471,7 @@ def _pack_signal_jobs(
                 dx, dy = _stub_delta(job["wrot"], length)
                 sx, sy = job["wx"] + dx, job["wy"] + dy
                 rot, just = _underline_pose(dx, dy)
-                box = _label_box(job["net"], sx, sy, rot)
+                box = _label_box(job["net"], sx, sy, rot, just)
                 hit = any(_boxes_overlap(box, other) for other in placed)
                 hit = hit or any(
                     ref != job["ref"] and _boxes_overlap(box, body)

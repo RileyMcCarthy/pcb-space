@@ -136,6 +136,30 @@ def test_annotate_replaces_on_pin_label_with_stub_and_local_label():
     assert '(property "Value" "GND"' in out
 
 
+def test_right_going_stub_stays_upright():
+    """A pin on the right of the body must not use rotation 180 (upside-down)."""
+    import re
+
+    out = annotate_sch_nets(SCH, NET.replace(
+        '(name "GND")',
+        '(name "SPI_CS")',
+    ).replace(
+        '(node (ref "U1") (pin "2"))',
+        '(node (ref "U1") (pin "2"))\n      (node (ref "U3") (pin "1"))',
+    ))
+    m = re.search(
+        r'\(label "SPI_CS"\n\t\t\(at ([0-9.+-]+) ([0-9.+-]+)(?: ([0-9.+-]+))?\)',
+        out,
+    )
+    assert m, out[out.find("SPI_CS") : out.find("SPI_CS") + 200]
+    rot = float(m.group(3) or 0)
+    assert rot in (0, 90), rot
+    block = out[m.start() : m.start() + 280]
+    assert "right" in block or '(at ' in block
+    # Right pin is at x=53.81; stub goes +X; far end > pin; rot 0 justify right.
+    assert float(m.group(1)) > 53.0
+
+
 def test_label_is_on_the_wire_not_beside_it():
     import re
     from pcb_space.sch_nets import _text_width
