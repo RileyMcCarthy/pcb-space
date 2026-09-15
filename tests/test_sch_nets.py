@@ -1,0 +1,346 @@
+from pcb_space.sch_nets import (
+    annotate_sch_nets,
+    is_power_net,
+    parse_lib_pins,
+    pin_to_net,
+    spread_symbols,
+    _delete_long_wires,
+)
+
+SCH = """(kicad_sch
+	(version 20260306)
+	(lib_symbols
+		(symbol "IC"
+			(property "Reference" "U"
+				(at 0 0 0)
+				(effects (font (size 1.27 1.27)))
+			)
+			(symbol "IC_0_1"
+				(rectangle
+					(start -2.54 2.54)
+					(end 2.54 -2.54)
+					(stroke (width 0.254) (type default))
+					(fill (type background))
+				)
+			)
+			(symbol "IC_1_1"
+				(pin unspecified line
+					(at -3.81 0 0)
+					(length 2.54)
+					(name "1"
+						(effects (font (size 1.27 1.27)))
+					)
+					(number "1"
+						(effects (font (size 1.27 1.27)))
+					)
+				)
+				(pin unspecified line
+					(at 3.81 0 180)
+					(length 2.54)
+					(name "2"
+						(effects (font (size 1.27 1.27)))
+					)
+					(number "2"
+						(effects (font (size 1.27 1.27)))
+					)
+				)
+			)
+		)
+		(symbol "GND"
+			(power global)
+			(property "Value" "GND"
+				(at 0 0 0)
+				(effects (font (size 1.27 1.27)))
+			)
+			(symbol "GND_1_1"
+				(pin power_in line
+					(at 0 0 270)
+					(length 0)
+					(name ""
+						(effects (font (size 1.27 1.27)))
+					)
+					(number "1"
+						(effects (font (size 1.27 1.27)))
+					)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "IC")
+		(at 50 50 0)
+		(uuid "11111111-1111-1111-1111-111111111111")
+		(property "Reference" "U1"
+			(at 50 50 0)
+			(effects (font (size 1.27 1.27)))
+		)
+		(pin "1"
+			(uuid "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+		)
+		(pin "2"
+			(uuid "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+		)
+	)
+	(label "SPI_CLK"
+		(at 46.19 50 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "cccccccccccccccccccccccccccccccccccc")
+	)
+)
+"""
+
+NET = """(export (version "E")
+  (components
+    (comp (ref "U1") (value "IC") (footprint "SOIC"))
+  )
+  (nets
+    (net (code "1") (name "SPI_CLK")
+      (node (ref "U1") (pin "1"))
+      (node (ref "U2") (pin "5"))
+    )
+    (net (code "2") (name "GND")
+      (node (ref "U1") (pin "2"))
+    )
+  )
+)
+"""
+
+
+def test_is_power_net():
+    assert is_power_net("GND")
+    assert is_power_net("+12V")
+    assert is_power_net("+3V3")
+    assert not is_power_net("SPI_CLK")
+    assert not is_power_net("Temp1")
+
+
+def test_pin_to_net_maps_ref_pin():
+    from pcb_space.sch_nets import parse_netlist
+
+    _c, nets = parse_netlist(NET)
+    lookup = pin_to_net(nets)
+    assert lookup[("U1", "1")] == "SPI_CLK"
+    assert lookup[("U1", "2")] == "GND"
+
+
+def test_annotate_replaces_on_pin_label_with_stub_and_local_label():
+    out = annotate_sch_nets(SCH, NET)
+    assert '(global_label "SPI_CLK"' not in out
+    assert '(label "SPI_CLK"' in out
+    assert "(wire" in out
+    assert out.count("(wire") >= 1
+    assert '(lib_id "GND")' in out
+    assert '(property "Value" "GND"' in out
+
+
+def test_right_going_stub_stays_upright():
+    """A pin on the right of the body must not use rotation 180 (upside-down)."""
+    import re
+
+    out = annotate_sch_nets(SCH, NET.replace(
+        '(name "GND")',
+        '(name "SPI_CS")',
+    ).replace(
+        '(node (ref "U1") (pin "2"))',
+        '(node (ref "U1") (pin "2"))\n      (node (ref "U3") (pin "1"))',
+    ))
+    m = re.search(
+        r'\(label "SPI_CS"\n\t\t\(at ([0-9.+-]+) ([0-9.+-]+)(?: ([0-9.+-]+))?\)',
+        out,
+    )
+    assert m, out[out.find("SPI_CS") : out.find("SPI_CS") + 200]
+    rot = float(m.group(3) or 0)
+    assert rot in (0, 90), rot
+    block = out[m.start() : m.start() + 280]
+    assert "right" in block or '(at ' in block
+    # Right pin is at x=53.81; stub goes +X; far end > pin; rot 0 justify right.
+    assert float(m.group(1)) > 53.0
+
+
+def test_label_is_on_the_wire_not_beside_it():
+    import re
+    from pcb_space.sch_nets import _text_width
+
+    out = annotate_sch_nets(SCH, NET)
+    # Pin 1 is at (46.19, 50), stub goes left. Label is at the far end;
+    # wire runs from the pin to that end and is at least the name wide.
+    lm = re.search(
+        r'\(label "SPI_CLK"\n\t\t\(at ([0-9.+-]+) ([0-9.+-]+)',
+        out,
+    )
+    assert lm
+    lx, ly = float(lm.group(1)), float(lm.group(2))
+    assert abs(ly - 50) < 0.2
+    pin_x = 50 - 3.81
+    assert lx < pin_x - _text_width("SPI_CLK") + 0.5
+    wires = re.findall(
+        r"\(xy ([0-9.+-]+) ([0-9.+-]+)\) \(xy ([0-9.+-]+) ([0-9.+-]+)\)",
+        out,
+    )
+    aligned = False
+    for x0, y0, x1, y1 in wires:
+        xs, ys = sorted((float(x0), float(x1))), sorted((float(y0), float(y1)))
+        if ys[0] <= ly <= ys[1] + 0.2 and xs[0] - 0.2 <= lx <= xs[1] + 0.2:
+            aligned = True
+            assert (xs[1] - xs[0]) + 0.2 >= _text_width("SPI_CLK")
+    assert aligned
+
+
+def test_annotate_skips_power_when_wire_already_there():
+    sch = SCH.replace(
+        "\t(label",
+        "\t(wire\n\t\t(pts\n\t\t\t(xy 53.81 50) (xy 53.81 55)\n\t\t)\n"
+        '\t\t(uuid "dddddddd-dddd-dddd-dddd-dddddddddddd")\n'
+        "\t)\n"
+        "\t(label",
+    )
+    out = annotate_sch_nets(sch, NET)
+    # Pin 2 already has a wire at the connection point — do not add a GND symbol.
+    assert '(lib_id "GND")' not in out
+    assert '(label "SPI_CLK"' in out
+    assert '(global_label' not in out
+
+
+def test_one_pin_nets_are_not_labeled():
+    net = """(export (version "E")
+  (components
+    (comp (ref "U1") (value "IC") (footprint "SOIC"))
+  )
+  (nets
+    (net (code "1") (name "A1.D0")
+      (node (ref "U1") (pin "1"))
+    )
+    (net (code "2") (name "GND")
+      (node (ref "U1") (pin "2"))
+    )
+  )
+)
+"""
+    out = annotate_sch_nets(SCH, net)
+    assert '(label "A1.D0"' not in out
+
+
+def test_stagger_adjacent_stubs():
+    sch = SCH.replace(
+        '\t\t\t\t(pin unspecified line\n'
+        '\t\t\t\t\t(at 3.81 0 180)\n',
+        '\t\t\t\t(pin unspecified line\n'
+        '\t\t\t\t\t(at -3.81 -2.54 0)\n'
+        '\t\t\t\t\t(length 2.54)\n'
+        '\t\t\t\t\t(name "2"\n'
+        '\t\t\t\t\t\t(effects (font (size 1.27 1.27)))\n'
+        '\t\t\t\t\t)\n'
+        '\t\t\t\t\t(number "2"\n'
+        '\t\t\t\t\t\t(effects (font (size 1.27 1.27)))\n'
+        '\t\t\t\t\t)\n'
+        '\t\t\t\t)\n'
+        '\t\t\t\t(pin unspecified line\n'
+        '\t\t\t\t\t(at 3.81 0 180)\n',
+    )
+    # Both signal pins on the left: 1 at y=50, 2 at y=47.46
+    net = NET.replace(
+        '(node (ref "U1") (pin "2"))',
+        '(node (ref "U1") (pin "2"))\n      (node (ref "U3") (pin "1"))',
+    ).replace(
+        '(name "GND")',
+        '(name "SPI_CS")',
+    )
+    out = annotate_sch_nets(sch, net)
+    xs = __import__("re").findall(r'\(label "SPI_[A-Z]+"\n\t\t\(at ([0-9.+-]+)', out)
+    assert len(xs) == 2
+    assert xs[0] != xs[1]
+
+
+def test_parse_lib_pins_reads_connection_point():
+    pins = parse_lib_pins(
+        '(symbol "R_Small"\n'
+        '\t\t\t(symbol "R_Small_1_1"\n'
+        "\t\t\t\t(pin unspecified line\n"
+        "\t\t\t\t\t(at -3.81 0 0)\n"
+        "\t\t\t\t\t(length 2.54)\n"
+        '\t\t\t\t\t(number "1"\n'
+        "\t\t\t\t\t\t(effects (font (size 1.27 1.27)))\n"
+        "\t\t\t\t\t)\n"
+        "\t\t\t\t)\n"
+        "\t\t\t)\n"
+        "\t\t)\n"
+    )
+    assert "1" in pins
+    assert pins["1"][0] == -3.81
+
+
+def test_delete_long_wires_drops_power_buses():
+    sch = SCH.rstrip()[:-1] + (
+        "\t(wire\n"
+        "\t\t(pts\n"
+        "\t\t\t(xy 50 50) (xy 200 200)\n"
+        "\t\t)\n"
+        '\t\t(uuid "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")\n'
+        "\t)\n"
+        ")\n"
+    )
+    out = _delete_long_wires(sch, 16.0)
+    assert "(xy 200 200)" not in out
+
+
+def test_spread_symbols_separates_close_ics():
+    sch = SCH.replace(
+        "\t(label",
+        """	(symbol
+		(lib_id "IC")
+		(at 70 50 0)
+		(uuid "22222222-2222-2222-2222-222222222222")
+		(property "Reference" "U2"
+			(at 70 50 0)
+			(effects (font (size 1.27 1.27)))
+		)
+		(pin "1"
+			(uuid "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+		)
+		(pin "2"
+			(uuid "ffffffffffffffffffffffffffffffffffffffff")
+		)
+	)
+	(label""",
+    )
+    out = spread_symbols(sch)
+    import re
+
+    ats = {
+        m.group(1): (float(m.group(2)), float(m.group(3)))
+        for m in re.finditer(
+            r'\(property "Reference" "(U[12])"\n\t\t\t\(at ([0-9.+-]+) ([0-9.+-]+)',
+            out,
+        )
+    }
+    # Prefer instance (at) which is the first (at) after lib_id
+    inst = re.findall(
+        r'\(lib_id "IC"\)\n\t\t\(at ([0-9.+-]+) ([0-9.+-]+)',
+        out,
+    )
+    assert len(inst) == 2
+    xs = sorted(float(x) for x, _y in inst)
+    # Each IC half-width ~3.81 plus 26 mm label margin each side.
+    assert xs[1] - xs[0] > 50.0
+
+
+def test_pin_names_are_shown_inside_the_box():
+    out = annotate_sch_nets(SCH, NET)
+    assert "(hide no)" in out
+    assert "(offset 1.016)" in out
+
+
+def test_passives_are_not_labeled():
+    from pcb_space.sch_nets import _is_passive
+
+    assert _is_passive("R1")
+    assert _is_passive("C12")
+    assert _is_passive("L9")
+    assert not _is_passive("U1")
+    assert not _is_passive("A1")
+    assert not _is_passive("J9")

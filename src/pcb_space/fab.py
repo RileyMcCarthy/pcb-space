@@ -14,8 +14,10 @@ from pathlib import Path
 from .apply import write_dru
 from .check import check_job
 from .compile import CompiledJob
+from .copper import power_ampacity_failures, unrouted_nets, vias_on_no_via_nets
 from .place import copy_with_siblings
 from .silk import silk_job
+from .geom import footprint_box_local
 from .sexp import (
     board_footprint_spans,
     footprint_at,
@@ -98,6 +100,9 @@ def jlc_bom(pcb_text: str, sources: dict[str, dict]) -> tuple[list[dict], list[s
         if "\n" in block:
             m = re.match(r'\(footprint "([^"]+)"', block)
             footprint = m.group(1) if m else footprint
+        if not lcsc and "(attr through_hole" in block:
+            # User-soldered TH (Teensy, pin headers). Not a JLC SMT row.
+            continue
         key = (comment, footprint.split(":")[-1], str(lcsc))
         rows_by.setdefault(key, []).append(ref)
         if not lcsc:
@@ -116,13 +121,12 @@ def jlc_bom(pcb_text: str, sources: dict[str, dict]) -> tuple[list[dict], list[s
 
 
 def write_bom_csv(rows: list[dict], path: Path) -> None:
-    path.write_text(
-        "Comment,Designator,Footprint,LCSC Part #\n"
-        + "".join(
-            f'{r["Comment"]},{r["Designator"]},{r["Footprint"]},{r["LCSC Part #"]}\n'
-            for r in rows
-        )
-    )
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(["Comment", "Designator", "Footprint", "LCSC Part #"])
+    for r in rows:
+        w.writerow([r["Comment"], r["Designator"], r["Footprint"], r["LCSC Part #"]])
+    path.write_text(buf.getvalue())
 
 
 def kicad_pos_to_jlc_cpl(pos_csv: str) -> str:
@@ -211,9 +215,10 @@ def via_in_pad(pcb_text: str) -> list[dict]:
         ref = footprint_reference(block) or "?"
         at = footprint_at(block) or (0.0, 0.0, 0.0)
         pads: list[tuple] = []
-        for pad in re.finditer(r'\(pad "([^"]*)"', block):
+        for pad in re.finditer(r'\(pad "([^"]*)"\s+(\S+)', block):
             name = pad.group(1)
-            if not name:
+            kind = pad.group(2)
+            if not name or kind != "smd":
                 continue
             chunk = block[pad.start() : pad.start() + 400]
             pm = re.search(
@@ -249,6 +254,26 @@ def via_in_pad(pcb_text: str) -> list[dict]:
             if found:
                 break
     return hits
+
+
+_PASSIVE_REF = re.compile(r"^[CRL]\d")
+
+
+def via_in_pad_blockers(hits: list[dict]) -> list[dict]:
+    """VIP that JLC Standard cannot assemble: passives and connector mounting pegs.
+
+    USB-C underpad (qfn_fanout --allow-via-in-pad) and IC pins stay named in
+    FAB_NOTES as filled+capped; they are not a Standard-fab hard fail.
+    A via inside an 0603/resistor/inductor pad wicks the joint even when filled.
+    """
+    out: list[dict] = []
+    for h in hits:
+        pad = str(h.get("pad") or "")
+        ref = pad.split(".", 1)[0]
+        name = pad.split(".", 1)[-1] if "." in pad else ""
+        if name.upper() == "MP" or _PASSIVE_REF.match(ref):
+            out.append(h)
+    return out
 
 
 def _fiducial_sexp(ref: str, x: float, y: float) -> str:
@@ -288,6 +313,33 @@ def _fiducial_sexp(ref: str, x: float, y: float) -> str:
 '''
 
 
+def _world_courtyard(block: str) -> tuple[float, float, float, float] | None:
+    at = footprint_at(block)
+    if not at:
+        return None
+    x0, y0, x1, y1 = footprint_box_local(block, "courtyard")
+    fx, fy, rot = at
+    rad = math.radians(-rot)
+    c, s = math.cos(rad), math.sin(rad)
+    xs, ys = [], []
+    for px, py in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+        xs.append(fx + px * c - py * s)
+        ys.append(fy + px * s + py * c)
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _fid_hits_courtyard(text: str, x: float, y: float, radius: float = 1.35) -> bool:
+    for start, end in board_footprint_spans(text):
+        box = _world_courtyard(text[start:end])
+        if not box:
+            continue
+        cx = min(max(x, box[0]), box[2])
+        cy = min(max(y, box[1]), box[3])
+        if math.hypot(x - cx, y - cy) < radius:
+            return True
+    return False
+
+
 def insert_fiducials(text: str, size_mm: tuple[float, float], inset: float = 4.0) -> tuple[str, list[tuple[str, float, float]]]:
     existing = [footprint_reference(text[s:e]) for s, e in board_footprint_spans(text)]
     if any(r and r.startswith("FID") for r in existing):
@@ -300,12 +352,25 @@ def insert_fiducials(text: str, size_mm: tuple[float, float], inset: float = 4.0
                 placed.append((r, at[0], at[1]))
         return text, placed
     w, h = size_mm
-    # Skip NW: ESP32-C3-MINI typically sits there on c3_usb. NE/SE/SW.
-    spots = [
-        ("FID1", w - inset, inset),
-        ("FID2", w - inset, h - inset),
-        ("FID3", inset, h - inset),
+    # Prefer NE/SE/SW; fall back to NW if a courtyard eats a corner.
+    candidates = [
+        (w - inset, inset),
+        (w - inset, h - inset),
+        (inset, h - inset),
+        (inset, inset),
     ]
+    spots: list[tuple[str, float, float]] = []
+    for x, y in candidates:
+        if not _fid_hits_courtyard(text, x, y):
+            spots.append((f"FID{len(spots) + 1}", x, y))
+        if len(spots) == 3:
+            break
+    if len(spots) < 3:
+        spots = [
+            ("FID1", w - inset, inset),
+            ("FID2", w - inset, h - inset),
+            ("FID3", inset, h - inset),
+        ]
     if not text.rstrip().endswith(")"):
         raise ValueError("board file does not end with )")
     stripped = text.rstrip()
@@ -335,6 +400,8 @@ _IGNORE_DRC = {
     "via_dangling",
     "track_dangling",
     "diff_pair_gap_out_of_range",
+    # NetReq max_mm is an airwire/cluster budget, not routed maze length.
+    "length_out_of_range",
 }
 
 
@@ -432,6 +499,7 @@ def fab_job(
     bom_rows, missing_lcsc = jlc_bom(text, sources)
     write_bom_csv(bom_rows, out_dir / "bom.csv")
     vip = via_in_pad(text)
+    blockers = via_in_pad_blockers(vip)
 
     cli = kicad_cli()
     steps: list[dict] = []
@@ -443,6 +511,7 @@ def fab_job(
         "bom_rows": len(bom_rows),
         "missing_lcsc": missing_lcsc,
         "via_in_pad": vip,
+        "via_in_pad_blockers": blockers,
         "silk": silk_rep.get("silk"),
         "steps": steps,
         "error": None,
@@ -489,7 +558,10 @@ def fab_job(
         )
         _write_notes(out_dir, job, result)
         return result
-    floor = 0.10 if job.layers <= 2 else 0.16
+    # 2-layer USB floor is 0.10. 4-layer JLCPCB standard is 0.127 mm (5 mil);
+    # 0.16 was a house comfort value that flagged 0.15 mm via-seg scrapes the
+    # fab will build.
+    floor = 0.10 if job.layers <= 2 else 0.127
     copper_err = copper_drc_errors(drc_doc, floor_mm=floor)
     result["drc_floor_mm"] = floor
     result["drc_copper_errors"] = len(copper_err)
@@ -527,8 +599,34 @@ def fab_job(
         result["error"] = f"kicad-cli DRC {len(copper_err)} copper error(s)"
         _write_notes(out_dir, job, result)
         return result
+    if blockers:
+        result["error"] = (
+            f"{len(blockers)} via-in-pad on passives/mounting pegs; "
+            "re-route with --same-net-pad-clearance (dog-bone, not VIP)"
+        )
+        _write_notes(out_dir, job, result)
+        return result
     if missing_cpl:
         result["error"] = f"BOM refs missing from CPL: {', '.join(missing_cpl)}"
+        _write_notes(out_dir, job, result)
+        return result
+
+    opens = unrouted_nets(text)
+    result["unrouted"] = opens
+    if opens:
+        result["error"] = "unrouted net " + ", ".join(opens)
+        _write_notes(out_dir, job, result)
+        return result
+    via_fail = vias_on_no_via_nets(job, text)
+    result["no_via_violations"] = via_fail
+    if via_fail:
+        result["error"] = "; ".join(via_fail)
+        _write_notes(out_dir, job, result)
+        return result
+    amp = power_ampacity_failures(job, text)
+    result["ampacity"] = amp
+    if amp:
+        result["error"] = "; ".join(amp)
         _write_notes(out_dir, job, result)
         return result
 
@@ -597,13 +695,20 @@ def _write_notes(out_dir: Path, job: CompiledJob, result: dict) -> None:
     else:
         lines.append("- None in the file. Ask JLCPCB to add rails + fiducials, or re-run with insert.")
     lines += ["", "## Via-in-pad", ""]
+    blockers = result.get("via_in_pad_blockers") or []
     if vip:
         lines.append(
             f"{len(vip)} via(s) have copper fully inside an SMT pad. "
-            "Order **filled + capped** vias (IPC-4761 Type VII). USB-C underpad (J1) is required; others wick solder if left open:"
+            "USB-C underpad may stay (filled + capped, IPC-4761 Type VII). "
+            "Passives and connector mounting pegs must be dog-boned — they fail this gate:"
         )
-        for h in vip[:40]:
+        for h in (blockers or vip)[:40]:
             lines.append(f"- {h['pad']} @ ({h['via'][0]:.3f}, {h['via'][1]:.3f})")
+        allowed = [h for h in vip if h not in blockers]
+        if allowed and blockers:
+            lines.append(
+                f"{len(allowed)} underpad via(s) remain (USB-C / IC); order filled + capped."
+            )
     else:
         lines.append("- None detected.")
     lines += ["", "## BOM LCSC", ""]
@@ -611,11 +716,19 @@ def _write_notes(out_dir: Path, job: CompiledJob, result: dict) -> None:
         lines.append("Missing LCSC (will not assemble until filled from SOURCE.json): " + ", ".join(miss))
     else:
         lines.append("Every BOM row has an LCSC code from SOURCE.json.")
+    lines.append(
+        "Through-hole footprints without LCSC (modules, pin headers) are omitted "
+        "from the JLC BOM — solder them after SMT."
+    )
     lines += [
         "",
         "## Do not",
         "",
-        "- Upload this zip until via-in-pad and LCSC rows are accepted.",
+    ]
+    if blockers or miss:
+        lines.append("- Order until via-in-pad blockers and LCSC rows are accepted.")
+    lines += [
+        "- Upload from this toolchain; zip `fab/` locally and order yourself.",
         "- Re-run `pcb layout` on `fab/`.",
         "",
     ]

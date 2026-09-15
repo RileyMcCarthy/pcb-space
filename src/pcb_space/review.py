@@ -14,6 +14,8 @@ from pathlib import Path
 
 from .compile import CompiledJob
 from .fab import kicad_cli
+from .sch_emit import emit_schematic_file
+from .sch_nets import parse_netlist
 from .sexp import matching_paren
 from .silk import silk_job
 
@@ -100,6 +102,10 @@ def kicad10_box_symbol(name: str, ports: list[tuple[str, str]], ref: str = "U") 
         '\t(generator "pcb-space")\n'
         '\t(generator_version "10.0")\n'
         f'\t(symbol "{name}"\n'
+        "\t\t(pin_names\n"
+        "\t\t\t(offset 1.016)\n"
+        "\t\t\t(hide no)\n"
+        "\t\t)\n"
         "\t\t(exclude_from_sim no)\n"
         "\t\t(in_bom yes)\n"
         "\t\t(on_board yes)\n"
@@ -162,81 +168,18 @@ def rewrite_definition_symbols(components: Path) -> list[str]:
     return changed
 
 
-def export_zener_schematic(zen: Path, out_dir: Path, cli: Path) -> tuple[Path | None, list[dict]]:
-    """Copy the Zener workspace, attach KiCad-10 symbols, pcb apply schematic, plot."""
+def export_schematic(net_path: Path, out_dir: Path, cli: Path, *, title: str = "") -> tuple[Path | None, list[dict]]:
+    """Write a pcb-space .kicad_sch from default.net and plot SVG/PDF."""
     steps: list[dict] = []
-    zen = Path(zen).resolve()
-    out_dir = Path(out_dir).resolve()
-    work = out_dir / "zener_sch"
-    if work.exists():
-        shutil.rmtree(work)
-    work.mkdir(parents=True)
-    root = zen.parent
-    shutil.copy2(zen, work / zen.name)
-    if (root / "pcb.toml").exists():
-        # Nested [workspace] inside the board tree makes `pcb build` fail.
-        lines = [
-            ln
-            for ln in (root / "pcb.toml").read_text().splitlines()
-            if not ln.startswith("[workspace]") and "pcb-version" not in ln
-        ]
-        (work / "pcb.toml").write_text("\n".join(lines).strip() + "\n")
-    if (root / "components").is_dir():
-        shutil.copytree(
-            root / "components",
-            work / "components",
-            ignore=shutil.ignore_patterns("_easyeda", "__pycache__"),
-        )
-        rewrite_definition_symbols(work / "components")
-    pcb_dir = root / ".pcb"
-    if pcb_dir.is_dir():
-        # Must copy, not symlink: pcb refuses symbol paths that resolve outside
-        # this workspace ("must resolve inside a workspace or dependency package").
-        shutil.copytree(
-            pcb_dir.resolve(),
-            work / ".pcb",
-            ignore=shutil.ignore_patterns("__pycache__", ".git"),
-        )
-    board = (work / zen.name).read_text()
-    if "schematic" not in board.split("Board(")[-1]:
-        (work / zen.name).write_text(
-            board.replace("layout_path = ", "schematic = True, layout_path = ", 1)
-            if "layout_path" in board
-            else board
-        )
-    elif "schematic = False" in board:
-        (work / zen.name).write_text(board.replace("schematic = False", "schematic = True", 1))
-    pcb = pcb_cli()
-    env = _kicad_env()
-    env["PATH"] = str(pcb.parent) + os.pathsep + env.get("PATH", "")
-    proc = subprocess.run(
-        [str(pcb), "apply", "schematic", "--no-open", "-f", "json", str(work / zen.name)],
-        capture_output=True,
-        text=True,
-        cwd=work,
-        env=env,
-    )
-    steps.append(
-        {
-            "cmd": [str(pcb), "apply", "schematic", "--no-open", str(work / zen.name)],
-            "returncode": proc.returncode,
-            "stdout": (proc.stdout or "")[-2000:],
-            "stderr": (proc.stderr or "")[-2000:],
-        }
-    )
-    schs = sorted(work.rglob("*.kicad_sch"))
-    if not schs:
-        return None, steps
-    sch = schs[0]
+    net_path = Path(net_path)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest_sch = out_dir / "schematic.kicad_sch"
+    emit_schematic_file(net_path, dest_sch, title=title or net_path.stem)
     sch_dir = out_dir / "sch"
     sch_dir.mkdir(exist_ok=True)
-    dest_sch = out_dir / "schematic.kicad_sch"
-    shutil.copy2(sch, dest_sch)
-    # Copy sibling project files kicad-cli may need, then drop the nested workspace.
-    for ext in (".kicad_pro", ".kicad_prl"):
-        sib = sch.with_suffix(ext)
-        if sib.exists():
-            shutil.copy2(sib, dest_sch.with_suffix(ext))
+    for old in sch_dir.glob("*.svg"):
+        old.unlink()
     steps.append(_export_sch_svg(cli, dest_sch, sch_dir))
     pdf = out_dir / "schematic.pdf"
     steps.append(
@@ -257,6 +200,18 @@ def export_zener_schematic(zen: Path, out_dir: Path, cli: Path) -> tuple[Path | 
     return dest_sch, steps
 
 
+def export_zener_schematic(zen: Path, out_dir: Path, cli: Path) -> tuple[Path | None, list[dict]]:
+    """Deprecated wrapper: emit from default.net next to the .zen."""
+    zen = Path(zen).resolve()
+    net = zen.parent / "layout" / zen.stem / "default.net"
+    if not net.exists():
+        found = sorted(zen.parent.rglob("default.net"))
+        net = found[0] if found else None
+    if net is None:
+        return None, [{"cmd": ["emit_schematic"], "returncode": 2, "stderr": "no default.net"}]
+    return export_schematic(net, out_dir, cli, title=zen.stem)
+
+
 def find_schematic(place: Path, pcb: Path) -> Path | None:
     roots = [place.parent, pcb.parent, *list(pcb.parents)[:4]]
     for root in roots:
@@ -274,32 +229,6 @@ def find_bom(pcb: Path) -> Path | None:
         if parent.name == "fab" and (parent / "bom.csv").exists():
             return parent / "bom.csv"
     return None
-
-
-_COMP = re.compile(
-    r'\(comp \(ref "([^"]+)"\)\s+\(value "([^"]*)"\)\s+\(footprint "([^"]*)"',
-)
-_NET_BLOCK = re.compile(
-    r'\(net \(code "[^"]*"\) \(name "([^"]*)"\)(.*?)(?=\n    \(net |\n  \)\n\))',
-    re.S,
-)
-_NODE = re.compile(r'\(node \(ref "([^"]+)"\) \(pin "([^"]*)"\)')
-
-
-def parse_netlist(text: str) -> tuple[list[dict], list[dict]]:
-    comps = [
-        {
-            "ref": m.group(1),
-            "value": m.group(2),
-            "footprint": m.group(3).split(":")[-1],
-        }
-        for m in _COMP.finditer(text)
-    ]
-    nets = []
-    for m in _NET_BLOCK.finditer(text):
-        nodes = [{"ref": r, "pin": p} for r, p in _NODE.findall(m.group(2))]
-        nets.append({"name": m.group(1), "nodes": nodes})
-    return comps, nets
 
 
 def schematic_svg(nets: list[dict]) -> str:
@@ -429,6 +358,45 @@ def _export_glb(cli: Path, pcb: Path, out: Path) -> dict:
     )
 
 
+_PATH_XY = re.compile(r"[ML]\s*([0-9.+-]+)\s+([0-9.+-]+)")
+_ATTR_XY = re.compile(r'\bx="([0-9.+-]+)"\s+y="([0-9.+-]+)"')
+
+
+def crop_svg_to_content(svg: str, *, pad_mm: float = 10.0, px_per_mm: float = 10.0) -> str:
+    """Fit the SVG to the drawn circuit and size it so 1.27 mm labels stay readable.
+
+    kicad-cli plots the whole A1 sheet. ``.plot svg { width:100% }`` then shrinks
+    that sheet into the review panel, so net labels (opacity-0 ``<text>`` plus
+    0.15 mm stroked paths) vanish. Crop the viewBox and set a pixel width.
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+    for m in _PATH_XY.finditer(svg):
+        x, y = float(m.group(1)), float(m.group(2))
+        if 2.0 < x < 2000 and 2.0 < y < 2000:
+            xs.append(x)
+            ys.append(y)
+    for m in _ATTR_XY.finditer(svg):
+        x, y = float(m.group(1)), float(m.group(2))
+        if 2.0 < x < 2000 and 2.0 < y < 2000:
+            xs.append(x)
+            ys.append(y)
+    if len(xs) < 4:
+        return svg
+    x0, y0 = min(xs) - pad_mm, min(ys) - pad_mm
+    x1, y1 = max(xs) + pad_mm, max(ys) + pad_mm
+    w, h = max(x1 - x0, 20.0), max(y1 - y0, 20.0)
+    out = re.sub(
+        r'viewBox="[^"]+"',
+        f'viewBox="{x0:.3f} {y0:.3f} {w:.3f} {h:.3f}"',
+        svg,
+        count=1,
+    )
+    out = re.sub(r'\bwidth="[^"]+"', f'width="{w * px_per_mm:.0f}px"', out, count=1)
+    out = re.sub(r'\bheight="[^"]+"', f'height="{h * px_per_mm:.0f}px"', out, count=1)
+    return out
+
+
 def _export_sch_svg(cli: Path, sch: Path, out_dir: Path) -> dict:
     return _run(
         [
@@ -549,6 +517,10 @@ def render_html(
     overflow: auto; max-height: 78vh; padding: 8px;
   }}
   .plot svg {{ display: block; width: 100%; height: auto; }}
+  /* KiCad schematic SVG is dark strokes on a transparent sheet. Fit-to-width
+     made 1.27 mm labels ~2 px. Light paper + intrinsic pixel size + scroll. */
+  .plot.sch {{ background: #f4f0e4; }}
+  .plot.sch svg {{ width: auto; max-width: none; height: auto; }}
   .zen {{
     background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
     padding: 14px; overflow: auto; max-height: 78vh; font: 12px/1.4 ui-monospace, Menlo, monospace;
@@ -654,8 +626,9 @@ def review_job(
     if not cli.exists() and shutil.which(str(cli)) is None:
         result["error"] = f"kicad-cli not found ({cli})"
     else:
-        if zen_path:
-            generated, zsteps = export_zener_schematic(zen_path, out_dir, cli)
+        if net_path:
+            title = zen_path.stem if zen_path else Path(pcb).stem
+            generated, zsteps = export_schematic(net_path, out_dir, cli, title=title)
             steps.extend(zsteps)
             if generated:
                 sch_path = generated
@@ -671,12 +644,17 @@ def review_job(
         steps.append(_export_svg(cli, plot_pcb, copper, "F.Cu,B.Cu,Edge.Cuts"))
         steps.append(_export_glb(cli, pcb, glb))
         sch_dir = out_dir / "sch"
-        if sch_path and not list(sch_dir.glob("*.svg")):
+        if sch_path:
             sch_dir.mkdir(exist_ok=True)
+            for old in sch_dir.glob("*.svg"):
+                old.unlink()
             steps.append(_export_sch_svg(cli, sch_path, sch_dir))
         svgs = sorted(sch_dir.glob("*.svg")) if sch_dir.exists() else []
         if svgs:
-            sch_svg_text = svgs[0].read_text(errors="replace")
+            raw = svgs[0].read_text(errors="replace")
+            sch_svg_text = crop_svg_to_content(raw)
+            if sch_svg_text != raw:
+                svgs[0].write_text(sch_svg_text)
 
     def _svg(p: Path) -> str | None:
         return p.read_text(errors="replace") if p.exists() and p.stat().st_size > 80 else None
@@ -696,7 +674,7 @@ def review_job(
         f"{len(comps)} components, {len(nets)} nets" if comps else "Netlist not found",
         "3D uses kicad-cli pcb export glb (tracks, pads, zones, silk, mask).",
         "USB-C / ESP32-C6-MINI STEP may be missing from the KiCad 3D library.",
-        "Schematic is pcb apply schematic → kicad-cli sch export svg/pdf.",
+        "Schematic is pcb-space emit from default.net (Zener remains the netlist; no pcb apply schematic).",
         "Silkscreen refs are legalized (size from courtyard, slots off the body) before plotting.",
         "Do not upload Gerbers from this page.",
     ]

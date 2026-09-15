@@ -1,6 +1,6 @@
 # pcb-space
 
-**Zener (`pcb`) is the schematic language. pcb-space is the spatial compiler and fab packager in front of KiCad.**
+**Zener (`pcb`) is the netlist language and PCB seeder. pcb-space owns the schematic drawing, place, route, and fab.**
 
 This is not a Zener fork. You write a `.zen` board and a `.place.py`. **`pcb-space build` is the compiler:** schematic (`pcb build` + lint) → seed (`pcb layout --no-open`) → place → route → fab. The agent never has to click Pcbnew.
 
@@ -9,7 +9,8 @@ pcb-space source   MPN / LCSC → Zener package + SOURCE.json
       ↓
 .zen + .place.py   intent (Zener nets, CSS locks, NetReq)
       ↓
-pcb-space build    schematic → seed → place → route → fab
+pcb-space schematic   default.net → .kicad_sch (readable drawing)
+pcb-space build       seed → place → route → fab
 ```
 
 Already-committed `placed/` / `routed/` / `fab/` are left alone. `--force` or `--from place` is an opt-in rebuild (a new PCBA). `pcb layout` on those directories duplicates footprints; `seed` / `place` / `build` refuse them.
@@ -151,12 +152,12 @@ Rejected on purpose (clear error, not a silent no-op): `z-index`, `flex` / `grid
 
 ## Source (parts)
 
-Distributors are not CAD libraries. `source search` hits LCSC/JLC. `source check` fails a land whose Fab body is not the datasheet size (the SHT40 1.5 mm die on a 1.0 mm UDFN). Passives stay stdlib generics — do not download a unique 0402 symbol.
+Distributors are not CAD libraries. `source search` lists LCSC/JLC hits — **import does not autoselect EasyEDA.** Pass `--pick C…` when several rows match. ICs need `--footprint` (KiCad land) or opt-in `--easyeda` (graphics + pad numbers). Pin **names** live in the `.zen` definition (board mode, e.g. dual H-bridge). Optional `--pins` JSON only seeds that definition. Passives stay stdlib generics.
 
 ```bash
 pcb-space source search TPS61023DRLR --fab jlcpcb
 pcb-space source import  "100nF 0402" --kind generic -o components
-pcb-space source import  SHT40-AD1B --footprint path/to.kicad_mod --body 1.5x1.5
+pcb-space source import  C919459 --footprint path/to.kicad_mod --body 1.5x1.5
 pcb-space source check   components/Sensirion/SHT40-AD1B --body 1.5x1.5
 ```
 
@@ -186,7 +187,7 @@ pcb-space review  examples/c3_usb/c3_usb.place.py
 pcb-space source  search "100nF 0402"
 ```
 
-Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI job `pytest` runs every test except those marked `kicad`. Job `c3-usb-fab` installs KiCad 10, runs the **full** suite (kicad tests may not skip), then `pcb-space fab` on the committed routed board. Both jobs are required to merge to `master`. Full re-place / re-route needs `KRT_HOME` and is not run on GitHub Actions.
+Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI job `pytest` runs every test except those marked `kicad`. Job `c3-usb-fab` installs KiCad 10 and fabs the committed routed board. Job `krt-4layer` pins KiCadRoutingTools and `place`+`route`+`fab`s `examples/buck_sw/` (4-layer, switch-node cluster).
 
 `apply` locks `Place(..., locked=True)` footprints, writes the `Edge.Cuts` outline from `Board` size when the seed has none, writes net classes into the sibling `.kicad_pro`, writes `.kicad_dru`, and inserts keepout zones. It copies the board to `*.kicad_pcb.bak-pcbspace` first.
 
@@ -200,11 +201,11 @@ Worked PCBA: `examples/c3_usb/` (USB-C → AP2112 → ESP32-C3-MINI-1). CI job `
 
 `refs` maps Zener instance names (`R_CC1`) to KiCad references (`R2`) via footprint `Path`.
 
-`check` fails if a locked part moved or a named keepout disappeared.
+`check` fails if a locked part moved, a named keepout disappeared, an analog/SW airwire exceeds `NetReq max_mm`, or different-net pads sit closer than the copper floor (0.10 mm 2-layer / 0.16 mm 4-layer). That last gate is how NTC-on-Teensy pin-row shorts fail place, not only KRT.
 
-`route` picks the `placed/` board when it exists, refreshes net classes, routes USB pairs (`route_diff`), then signals, then on 2-layer pours GND last and finalizes. Analog / switch-node nets stay in `skip_autoroute`. Output is `routed/layout.kicad_pcb`. `--script-only` writes the plan without running it. Set `KRT_HOME` if the router is not in `~/Downloads/KiCadRoutingTools`. True 90 Ω USB needs 4-layer; 1.6 mm 2-layer is a tightly-coupled fab-floor pair, not 90 Ω.
+`route` picks the `placed/` board when it exists, refreshes net classes, routes USB pairs (`route_diff`), then signals. Analog / switch-node nets get an F.Cu-only pass (`--via-cost 100000`) then stay out of the maze. Every maze / plane step passes `--same-net-pad-clearance` (no via-in-pad on 0603s) and compiled `--via-size/--via-drill` (0.45/0.20). USB-C `qfn_fanout --allow-via-in-pad` is the exception (0.25/0.15 underpad). 4-layer boards with a GND plane get a keep-input-copper GND tap pass so HTSSOP PGND pins dog-bone instead of via-in-pad. 2-layer pours GND last and finalizes. Output is `routed/layout.kicad_pcb`. `--script-only` writes the plan without running it. Set `KRT_HOME` if the router is not in `~/Downloads/KiCadRoutingTools`. True 90 Ω USB needs 4-layer; 1.6 mm 2-layer is a tightly-coupled fab-floor pair, not 90 Ω.
 
-`fab` picks `routed/` when it exists, inserts three F.Cu fiducials, writes JLCPCB `bom.csv` / `cpl.csv` (LCSC from `SOURCE.json`; CPL from footprint positions, Y negated like KiCad POS), Gerbers, drill, and `FAB_NOTES.md` (via-in-pad). It does not upload. Copper `kicad-cli` DRC errors fail the command. KiCad 10 is required for DRC/Gerbers.
+`fab` picks `routed/` when it exists, inserts three F.Cu fiducials (skips a corner whose courtyard is occupied), writes JLCPCB `bom.csv` / `cpl.csv` (LCSC from `SOURCE.json`; through-hole without LCSC omitted as hand-solder; grouped designators quoted), Gerbers, drill, and `FAB_NOTES.md`. Via-in-pad on passives or connector mounting pegs **fails**. USB-C underpad is named, not a Standard-fab fail. Copper `kicad-cli` DRC errors fail the command (2-layer floor 0.10 mm, 4-layer JLCPCB 0.127 mm). It does not upload. KiCad 10 is required for DRC/Gerbers.
 
 ## What this is not
 

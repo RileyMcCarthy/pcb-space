@@ -34,29 +34,32 @@ pcb-space source search "100nF 0402" --fab jlcpcb
 pcb-space source import C1525 --kind generic --manufacturer Samsung -o components
 ```
 
-ICs/connectors/modules:
+ICs/connectors/modules — **search lists options; import does not autoselect EasyEDA:**
 
 ```bash
 pcb-space source search ESP32-C3-MINI-1 --fab jlcpcb
-pcb-space source import C2838502 --kind ic --manufacturer Espressif -o components
+# pick a C-code from the hits, a KiCad land, and a datasheet pin table:
+pcb-space source import C2838502 --kind ic --manufacturer Espressif \
+  --footprint path/to/ESP32-C3-MINI-1.kicad_mod --body 16.6x13.2 \
+  --pins PINS.json -o components
 pcb-space source check components/Espressif/ESP32-C3-MINI-1-N4 --body 16.6x13.2
 ```
+
+Several LCSC rows → import exits `pick` until `--pick C…`. `--easyeda` is opt-in (candidate land only) and still needs `--pins`. ICs are not `ok` without `--pins`.
 
 Prefer JLC **Basic** when the electrical part is the same. Record `lcsc` from the search hit in `SOURCE.json` (already written by import).
 
 ## 2. CAD gates (EasyEDA is not ground truth)
 
-`source import` without `--footprint` pulls EasyEDA. Then:
-
 1. `source check --body LxW` from the **datasheet package**, not the EasyEDA courtyard.
-2. If body fails, attach a KiCad official land with `--footprint` and the same `--body`. Keep the EasyEDA **symbol** only when its pad numbers match the datasheet table **and** the KiCad land's pad numbers.
-3. A file existing is not a pass. SHT40 1.5 mm on a 1.0 mm UDFN, and EasyEDA's ESP32-C3 module at 12.6×10.6 vs 16.6×13.2, are the same class of miss.
+2. Prefer `--footprint` from KiCad official. `--easyeda` is a candidate; body-gate it the same way.
+3. A file existing is not a pass. SHT40 1.5 mm on a 1.0 mm UDFN is the same class of miss.
 
 `Component(name=…)`: letters, digits, underscore only. No `.` (MPN `AP2112K-3.3` → `AP2112K_33TRG1`).
 
 ## 3. Pin-lock from the datasheet
 
-Do not trust EasyEDA pin names for power/USB/straps. After import, diff the generated `.zen` `definition` against the datasheet pin table (package drawing, top view). Fix the `.zen` if they disagree. Cite the table in a comment on that module.
+`--pins` is the datasheet table (name → pad numbers). It is written to `PINS.json` and becomes the `.zen` definition. EasyEDA pin names are not used unless they match that table. Do not invent pad numbers.
 
 USB-C device (UFP), when present:
 
@@ -81,7 +84,7 @@ LDO: Cin/Cout from the datasheet; EN must not float.
 ```bash
 pcb-space build <board>.place.py --upto schematic --from schematic
 pcb bom <board>.zen            # every row's MPN is one you imported
-pcb-space source check <ic-pkg> --body …   # every IC land
+pcb-space source check <ic-pkg> --body … --pins PINS.json   # body + datasheet pin table
 ```
 
 Pass only if:

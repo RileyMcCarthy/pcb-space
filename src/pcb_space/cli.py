@@ -17,9 +17,11 @@ from .route import route_job
 from .fab import fab_job
 from .place import place_job
 from .review import review_job
+from .sch_emit import emit_schematic_file
 from .schematic import lint_zen
 from .seed import seed_job
 from .silk import silk_job
+from .pins import check_pins
 from .source import check_footprint, import_part, parse_body_mm, search_parts
 from .status import nets_job, status_job
 
@@ -102,6 +104,9 @@ def cmd_source_import(args: argparse.Namespace) -> int:
         body=args.body,
         manufacturer=args.manufacturer or "",
         fab=args.fab,
+        pick=args.pick,
+        easyeda=args.easyeda,
+        pins=Path(args.pins) if args.pins else None,
     )
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
@@ -116,6 +121,18 @@ def cmd_source_import(args: argparse.Namespace) -> int:
 def cmd_source_check(args: argparse.Namespace) -> int:
     body = parse_body_mm(args.body) if args.body else None
     report = check_footprint(Path(args.path), body_mm=body, tol_mm=args.tol)
+    if args.pins or args.require_pins:
+        pins = check_pins(
+            Path(args.path),
+            pins=Path(args.pins) if args.pins else None,
+            require=args.require_pins,
+        )
+        report["pin_ok"] = pins.get("pin_ok")
+        report["pin_mismatches"] = pins.get("mismatches") or []
+        if pins.get("note"):
+            report["note"] = ((report.get("note") or "") + "; " + pins["note"]).strip("; ")
+        if pins.get("ok") is False:
+            report["ok"] = False
     json.dump(report, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0 if report.get("ok") else 1
@@ -184,6 +201,27 @@ def _review_pcb_path(args: argparse.Namespace, job) -> Path:
     if placed.exists():
         return placed
     return pcb
+
+
+def cmd_schematic(args: argparse.Namespace) -> int:
+    place = Path(args.place)
+    job = _job(place)
+    pcb = _pcb_path(args, job)
+    net = Path(args.net) if args.net else None
+    if net is None or not net.exists():
+        from .review import find_netlist
+
+        net = find_netlist(pcb) if pcb else None
+        if net is None:
+            hits = sorted(place.parent.rglob("default.net"))
+            net = hits[0] if hits else None
+    if net is None:
+        print("pass --net path/to/default.net (from pcb build)", file=sys.stderr)
+        return 2
+    out = Path(args.output) if args.output else place.parent / "layout" / "schematic.kicad_sch"
+    emit_schematic_file(net, out, title=place.stem)
+    print(out)
+    return 0
 
 
 def cmd_review(args: argparse.Namespace) -> int:
@@ -490,6 +528,13 @@ def main(argv: list[str] | None = None) -> int:
     sk.add_argument("--no-backup", action="store_true")
     sk.set_defaults(func=cmd_silk)
 
+    sch = sub.add_parser("schematic", help="Emit a KiCad schematic from default.net")
+    sch.add_argument("place")
+    sch.add_argument("--pcb")
+    sch.add_argument("--net", help="default.net from pcb build")
+    sch.add_argument("-o", "--output", help="Output .kicad_sch")
+    sch.set_defaults(func=cmd_schematic)
+
     rv = sub.add_parser("review", help="HTML review: schematic, copper SVGs, 3D GLB")
     rv.add_argument("place")
     rv.add_argument("--pcb")
@@ -522,12 +567,21 @@ def main(argv: list[str] | None = None) -> int:
     simp.add_argument("--body", help="Datasheet body LxW mm, e.g. 1.5x1.5")
     simp.add_argument("--manufacturer", default="")
     simp.add_argument("--fab", default="jlcpcb", choices=("jlcpcb", "any"))
+    simp.add_argument("--pick", help="LCSC C-code or MPN when search has several hits")
+    simp.add_argument(
+        "--easyeda",
+        action="store_true",
+        help="Use EasyEDA land as a candidate (not the default)",
+    )
+    simp.add_argument("--pins", help="Optional JSON name→pads to write into the .zen definition")
     simp.set_defaults(func=cmd_source_import)
 
-    schk = ss.add_parser("check", help="Fail if footprint body does not match datasheet")
+    schk = ss.add_parser("check", help="Fail if footprint body or pin-lock does not match datasheet")
     schk.add_argument("path", help="Package dir, .zen, or .kicad_mod")
     schk.add_argument("--body", help="Datasheet body LxW mm")
     schk.add_argument("--tol", type=float, default=0.2)
+    schk.add_argument("--pins", help="Optional JSON pin table (otherwise the package .zen)")
+    schk.add_argument("--require-pins", action="store_true", help="Fail if the .zen has no pin definition")
     schk.set_defaults(func=cmd_source_check)
 
     args = p.parse_args(argv)

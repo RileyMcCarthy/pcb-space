@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .eda import fetch_easyeda, group_pins, parse_symbol, pin_kind
 from .geom import box_size_mm, footprint_box_local, footprint_pad_count
+from .pins import check_pins, load_pin_lock
 from .lcsc import LcscHit, search_lcsc
 
 _BODY = re.compile(
@@ -168,9 +169,9 @@ def _ic_zen(r: SourceRecord) -> str:
     def_block = "\n".join(definition) if definition else ""
     pins_block = "\n".join(pin_map) if pin_map else ""
     return (
-        f'"""Sourced by pcb-space. Pin names come from the CAD library,\n'
-        f"not a datasheet lock — check SOURCE.json gates before trusting.\n"
-        f'LCSC {r.lcsc or ""} / {r.package}\n"""\n\n'
+        f'"""Sourced by pcb-space. Pin names are this .zen definition;\n'
+        f"graphics from .kicad_sym (pad numbers). LCSC {r.lcsc or ''} / {r.package}\n"
+        f'"""\n\n'
         f"{io_block}\n\n"
         f"Component(\n"
         f'    name = "{name}",\n'
@@ -187,6 +188,33 @@ def _ic_zen(r: SourceRecord) -> str:
         f"    }},\n"
         f")\n"
     )
+
+
+def select_hit(query: str, hits: list[dict], pick: str | None = None) -> dict | None:
+    """Return one LCSC row only when the query (or --pick) names it uniquely."""
+    if not hits:
+        return None
+    if pick:
+        p = str(pick).strip().upper()
+        p_num = p[1:] if p.startswith("C") and p[1:].isdigit() else p
+        matched = []
+        for h in hits:
+            lcsc = str(h.get("lcsc") or "").upper()
+            mpn = str(h.get("mpn") or "").upper()
+            if lcsc == p or mpn == p or lcsc.lstrip("C") == p_num:
+                matched.append(h)
+        return matched[0] if len(matched) == 1 else None
+    q = query.strip().upper()
+    if q.startswith("C") and q[1:].isdigit():
+        exact = [h for h in hits if str(h.get("lcsc") or "").upper() == q]
+        if len(exact) == 1:
+            return exact[0]
+    exact_mpn = [h for h in hits if str(h.get("mpn") or "").upper() == q]
+    if len(exact_mpn) == 1:
+        return exact_mpn[0]
+    if len(hits) == 1:
+        return hits[0]
+    return None
 
 
 def _attach_symbol(rec: SourceRecord, pkg: Path) -> None:
@@ -215,12 +243,38 @@ def import_part(
     manufacturer: str = "",
     fab: str = "jlcpcb",
     opener=None,
-    fetch_cad: bool = True,
+    pick: str | None = None,
+    easyeda: bool = False,
+    pins: Path | dict | None = None,
 ) -> dict:
-    found = search_parts(query, fab=fab, limit=5, opener=opener)
-    hit = found["hits"][0] if found["hits"] else {}
-    mpn = hit.get("mpn") or query
-    package = hit.get("package") or ""
+    """Attach one LCSC row. EasyEDA is opt-in and never the pin authority.
+
+    ICs are status=ok only with a chosen land (--footprint or --easyeda) and a
+    datasheet pin table (--pins). Multiple search hits with no --pick → status
+    pick (nothing written).
+    """
+    found = search_parts(query, fab=fab, limit=8, opener=opener)
+    hits = found.get("hits") or []
+    kind_guess = kind if kind != "auto" else guess_kind(query, (hits[0].get("package") if hits else "") or "")
+    if kind_guess != "generic":
+        hit = select_hit(query, hits, pick=pick)
+        if hit is None:
+            rec = SourceRecord(
+                mpn=query,
+                kind="ic",
+                vendors=hits,
+                status="pick",
+                gates={
+                    "ok": False,
+                    "note": "multiple LCSC hits; pass --pick C… (or a unique MPN). EasyEDA was not attached.",
+                },
+            )
+            return {"package": None, "record": rec.to_dict(), "search": found}
+    else:
+        hit = select_hit(query, hits, pick=pick) or (hits[0] if hits else {})
+
+    mpn = (hit or {}).get("mpn") or query
+    package = (hit or {}).get("package") or ""
     kind_u = kind if kind != "auto" else guess_kind(query, package)
     body_mm = parse_body_mm(body) or parse_body_mm(package)
     rec = SourceRecord(
@@ -229,70 +283,102 @@ def import_part(
         kind=kind_u,
         package=package,
         body_mm=body_mm,
-        lcsc=hit.get("lcsc"),
-        jlc_basic=hit.get("jlc_basic"),
-        stock=hit.get("stock"),
-        vendors=found["hits"],
+        lcsc=(hit or {}).get("lcsc"),
+        jlc_basic=(hit or {}).get("jlc_basic"),
+        stock=(hit or {}).get("stock"),
+        vendors=hits,
         cad_origin="none",
         status="needs_human",
     )
     dest = Path(dest)
     pkg = dest / _slug(rec.manufacturer or "vendor") / _slug(rec.mpn)
-    if footprint:
-        footprint = Path(footprint)
-        pkg.mkdir(parents=True, exist_ok=True)
-        copied = pkg / footprint.name
-        shutil.copy2(footprint, copied)
-        rec.footprint = copied.name
-        rec.cad_origin = "kicad-lib"
-        rec.gates = check_footprint(copied, body_mm=rec.body_mm)
-        rec.status = "ok" if rec.gates.get("ok") else "gate_failed"
-        if fetch_cad and rec.lcsc:
-            try:
-                _attach_symbol(rec, pkg)
-                rec.cad_origin = "kicad-lib+easyeda-symbol"
-            except RuntimeError as e:
-                rec.gates["symbol_note"] = str(e)
-    elif kind_u == "generic":
+    lock = None
+    if isinstance(pins, dict):
+        lock = {str(k): list(v) if not isinstance(v, str) else [v] for k, v in pins.items()}
+    elif pins is not None:
+        lock = load_pin_lock(Path(pins))
+
+    if kind_u == "generic":
         rec.cad_origin = "stdlib-generic"
         rec.status = "ok"
         rec.gates = {"ok": True, "note": "generic: no unique CAD"}
-    elif fetch_cad and rec.lcsc:
-        pkg.mkdir(parents=True, exist_ok=True)
+        write_package(rec, pkg)
+        return {"package": str(pkg), "record": rec.to_dict(), "search": found}
+
+    pkg.mkdir(parents=True, exist_ok=True)
+    if footprint:
+        footprint = Path(footprint)
+        copied = pkg / footprint.name
+        if footprint.resolve() != copied.resolve():
+            shutil.copy2(footprint, copied)
+        rec.footprint = copied.name
+        rec.cad_origin = "kicad-lib"
+        rec.gates = check_footprint(copied, body_mm=rec.body_mm)
+    elif easyeda and rec.lcsc:
         try:
             cad = fetch_easyeda(rec.lcsc, pkg / "_easyeda")
             fp_src = Path(cad["footprint"])
             sym_src = Path(cad["symbol"])
             fp_dst = pkg / fp_src.name
-            sym_dst = pkg / f"{_slug(rec.mpn)}.kicad_sym"
             shutil.copy2(fp_src, fp_dst)
-            shutil.copy2(sym_src, sym_dst)
+            shutil.copy2(sym_src, pkg / f"{_slug(rec.mpn)}.kicad_sym")
             rec.footprint = fp_dst.name
-            rec.symbol = sym_dst.name
+            rec.symbol = f"{_slug(rec.mpn)}.kicad_sym"
             rec.cad_origin = "easyeda"
-            parsed = parse_symbol(sym_dst)
-            rec.pins = group_pins(parsed["pins"])
+            parsed = parse_symbol(pkg / rec.symbol)
             rec.datasheet = rec.datasheet or parsed.get("datasheet") or None
             if not rec.manufacturer:
                 rec.manufacturer = parsed.get("manufacturer") or ""
             rec.gates = check_footprint(fp_dst, body_mm=rec.body_mm)
-            rec.gates["pins"] = len(parsed["pins"])
-            rec.gates["pin_names"] = sorted(rec.pins)
-            rec.status = "ok" if rec.gates.get("ok") or rec.body_mm is None else "gate_failed"
-            if rec.body_mm is None and rec.gates.get("pads", 0) > 0:
-                rec.gates["ok"] = True
-                rec.gates["note"] = "no datasheet body to gate; CAD attached"
-                rec.status = "ok"
+            rec.gates["easyeda_pin_names"] = sorted(group_pins(parsed["pins"]))
             shutil.rmtree(pkg / "_easyeda", ignore_errors=True)
         except RuntimeError as e:
             rec.status = "needs_human"
             rec.gates = {"ok": False, "note": str(e)}
+            write_package(rec, pkg)
+            return {"package": str(pkg), "record": rec.to_dict(), "search": found}
     else:
         rec.status = "needs_human"
         rec.gates = {
             "ok": False,
-            "note": "no footprint given; pass --footprint or install easyeda2kicad",
+            "note": "IC: pass --footprint PATH (KiCad land) or --easyeda (candidate land). "
+            "Pass --pins JSON only to fill the .zen definition. EasyEDA is not autoselected.",
         }
+        write_package(rec, pkg)
+        return {"package": str(pkg), "record": rec.to_dict(), "search": found}
+
+    if rec.gates.get("ok") is False and rec.body_mm is not None:
+        rec.status = "gate_failed"
+        write_package(rec, pkg)
+        return {"package": str(pkg), "record": rec.to_dict(), "search": found}
+
+    if lock:
+        rec.pins = lock
+    elif rec.symbol:
+        rec.pins = group_pins(parse_symbol(pkg / rec.symbol)["pins"])
+    if rec.pins:
+        rec.status = "ok"
+        rec.gates["ok"] = True
+        rec.gates["pin_ok"] = True
+        if rec.symbol:
+            pin_rep = check_pins(pkg, pins=rec.pins)
+            rec.gates["pin_ok"] = pin_rep.get("pin_ok")
+            rec.gates["pin_mismatches"] = pin_rep.get("mismatches") or []
+            if pin_rep.get("pin_ok") is False:
+                rec.status = "gate_failed"
+                rec.gates["ok"] = False
+                rec.gates["note"] = pin_rep.get("note")
+                write_package(rec, pkg)
+                return {"package": str(pkg), "record": rec.to_dict(), "search": found}
+    else:
+        rec.status = "needs_pin_lock"
+        rec.gates["ok"] = False
+        rec.gates["pin_ok"] = None
+        rec.gates["note"] = (
+            (rec.gates.get("note") or "")
+            + "; land attached; add a .zen definition (or --pins JSON to generate one)"
+        ).strip("; ")
+
     write_package(rec, pkg)
     return {"package": str(pkg), "record": rec.to_dict(), "search": found}
 
@@ -354,6 +440,24 @@ def check_footprint(
         b = abs(fab_wh[0] - h) <= tol_mm and abs(fab_wh[1] - w) <= tol_mm
         body_ok = a or b
     ok = True if body_ok is None else body_ok
+    note = (
+        None
+        if body_ok is not False
+        else (
+            f"Fab {fab_wh[0]:.2f}×{fab_wh[1]:.2f} mm vs datasheet "
+            f"{body_mm[0]}×{body_mm[1]} mm — wrong land (SHT40-class miss)"
+        )
+    )
+    pin_report: dict = {}
+    pkg = Path(path)
+    if pkg.is_file():
+        pkg = pkg.parent
+    if pkg.is_dir() and (list(pkg.glob("*.zen")) or (pkg / "SOURCE.json").exists()):
+        pin_report = check_pins(pkg)
+        if pin_report.get("pin_ok") is False:
+            ok = False
+            extra = pin_report.get("note") or "pin-lock mismatch"
+            note = f"{note}; {extra}" if note else extra
     return {
         "ok": bool(ok),
         "footprint": str(used),
@@ -363,12 +467,7 @@ def check_footprint(
         "datasheet_body_mm": list(body_mm) if body_mm else None,
         "tol_mm": tol_mm,
         "body_ok": body_ok,
-        "note": (
-            None
-            if body_ok is not False
-            else (
-                f"Fab {fab_wh[0]:.2f}×{fab_wh[1]:.2f} mm vs datasheet "
-                f"{body_mm[0]}×{body_mm[1]} mm — wrong land (SHT40-class miss)"
-            )
-        ),
+        "pin_ok": pin_report.get("pin_ok"),
+        "pin_mismatches": pin_report.get("mismatches") or [],
+        "note": note,
     }

@@ -35,6 +35,10 @@ def test_analog_is_not_autorouted():
     assert all(n.autoroute is False for n in analog)
     assert "CH[1-9]*" in job.skip_autoroute_patterns
     assert "BOOST.BOOST_SW" in job.skip_autoroute_patterns
+    kinds = [g["kind"] for g in job.krt["sensitive"]]
+    assert kinds == ["switch_node", "analog"]
+    sw = next(n for n in job.nets if n.kind == "switch_node")
+    assert sw.max_length_mm == 8.0
 
 
 def test_locked_connectors_are_in_the_job():

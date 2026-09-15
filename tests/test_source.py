@@ -101,6 +101,85 @@ def test_import_generic_writes_package(tmp_path: Path):
     assert "Part(mpn" in (pkg / "part.zen").read_text()
 
 
+def test_select_hit_requires_pick_when_ambiguous():
+    hits = [
+        {"mpn": "DRV8262DDVR", "lcsc": "C33828788"},
+        {"mpn": "DRV8262DDWR", "lcsc": "C22427252"},
+    ]
+    from pcb_space.source import select_hit
+
+    assert select_hit("DRV8262", hits) is None
+    assert select_hit("DRV8262", hits, pick="C33828788")["mpn"] == "DRV8262DDVR"
+    assert select_hit("C33828788", hits)["mpn"] == "DRV8262DDVR"
+
+
+def test_import_ic_lists_hits_does_not_fetch_easyeda(tmp_path: Path):
+    payload = {
+        "components": [
+            {"lcsc": 1, "mfr": "DRV8262DDVR", "package": "HTSSOP-44", "stock": 4, "price": 1},
+            {"lcsc": 2, "mfr": "DRV8262DDWR", "package": "HTSSOP-44", "stock": 9, "price": 1},
+        ]
+    }
+    result = import_part("DRV8262", tmp_path, kind="ic", opener=_opener(payload))
+    assert result["package"] is None
+    assert result["record"]["status"] == "pick"
+    assert not list(tmp_path.rglob("*.kicad_mod"))
+
+
+def test_import_ic_needs_pins_even_with_land(tmp_path: Path):
+    payload = {
+        "components": [
+            {
+                "lcsc": 51118,
+                "mfr": "AP2112K-3.3TRG1",
+                "package": "SOT-25-5",
+                "stock": 1,
+                "price": 0.2,
+            }
+        ]
+    }
+    result = import_part(
+        "C51118",
+        tmp_path,
+        kind="ic",
+        footprint=UDFN,
+        body="1.0x1.0",
+        opener=_opener(payload),
+    )
+    assert result["record"]["status"] == "needs_pin_lock"
+    assert result["record"]["gates"]["ok"] is False
+
+
+def test_import_ic_ok_with_footprint_and_pins(tmp_path: Path):
+    payload = {
+        "components": [
+            {
+                "lcsc": 51118,
+                "mfr": "AP2112K-3.3TRG1",
+                "package": "SOT-25-5",
+                "stock": 1,
+                "price": 0.2,
+            }
+        ]
+    }
+    pins = tmp_path / "PINS.json"
+    pins.write_text(json.dumps({"P1": ["1"], "P2": ["2"], "P3": ["3"], "P4": ["4"], "P5": ["5"]}))
+    result = import_part(
+        "C51118",
+        tmp_path / "out",
+        kind="ic",
+        footprint=UDFN,
+        body="1.0x1.0",
+        pins=pins,
+        opener=_opener(payload),
+    )
+    assert result["record"]["status"] == "ok"
+    assert not (Path(result["package"]) / "PINS.json").exists()
+    zens = list(Path(result["package"]).glob("*.zen"))
+    assert zens
+    assert "definition" in zens[0].read_text()
+
+
 def test_import_ic_with_wrong_land_fails_gate(tmp_path: Path):
     payload = {
         "components": [
