@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pcb_space.sch_emit import emit_schematic
 
 NET = """(export (version "E")
@@ -69,6 +71,29 @@ def test_emit_uses_datasheet_pin_names_inside_the_box():
     assert '(number "1"' in sch
     assert '(name "GND"' in sch
     assert '(pin_numbers (hide no))' in sch
+
+
+def test_emit_renames_kicad_sym_from_zen(tmp_path: Path):
+    pkg = tmp_path / "components" / "IC"
+    pkg.mkdir(parents=True)
+    (pkg / "IC.zen").write_text(
+        'Component(name="IC", symbol=Symbol(name="IC", definition=[("IN1", ["1"]), ("GND", ["2"])]), '
+        'footprint=File("x.kicad_mod"), pins={"IN1": IN1, "GND": GND})\n'
+        "IN1 = io(Net())\nGND = io(Ground())\n"
+    )
+    (pkg / "IC.kicad_sym").write_text(
+        '(kicad_symbol_lib (version 20211014) (generator t)\n'
+        '  (symbol "IC"\n'
+        '    (pin unspecified line (at -5 0 0) (length 2.54)\n'
+        '      (name "RSVD") (number "1"))\n'
+        '    (pin unspecified line (at 5 0 180) (length 2.54)\n'
+        '      (name "GND") (number "2"))\n'
+        '  )\n)\n'
+    )
+    sch = emit_schematic(NET, title="t", components=tmp_path / "components")
+    assert '(name "IN1"' in sch
+    assert '(name "RSVD"' not in sch
+    assert '(lib_id "IC")' in sch
 
 
 def test_emit_one_hat_per_part_power_net():

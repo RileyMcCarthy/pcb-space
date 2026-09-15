@@ -1,7 +1,7 @@
-"""Datasheet pin-lock: PINS.json vs CAD/zen pad map.
+"""Pin lock: .zen definition vs .kicad_sym pad numbers.
 
-EasyEDA can attach a land that matches the body and still swap OUT1/OUT3.
-A PINS.json next to SOURCE.json is the datasheet table; CAD must match it.
+EasyEDA graphics are fine. Names follow the board's .zen (e.g. dual vs
+single H-bridge). We only require every zen pad number to exist on the symbol.
 """
 
 from __future__ import annotations
@@ -59,33 +59,29 @@ def pin_lock_report(cad: dict, lock: dict) -> dict:
 
 
 def load_pin_lock(path: Path) -> dict[str, list[str]] | None:
+    """Zen definition is the lock. A JSON path is only for `source import --pins`."""
     path = Path(path)
     if path.is_file() and path.suffix.lower() == ".json":
         data = json.loads(path.read_text())
         if isinstance(data, dict) and data.get("pins") and isinstance(data["pins"], dict):
             data = data["pins"]
         return {str(k): list(v) if not isinstance(v, str) else [v] for k, v in data.items()}
+    if path.is_file() and path.suffix == ".zen":
+        zp = parse_zen_pins(path.read_text())
+        return zp or None
     if path.is_dir():
-        pins_json = path / "PINS.json"
-        if pins_json.exists():
-            return load_pin_lock(pins_json)
-        source = path / "SOURCE.json"
-        if source.exists():
-            rec = json.loads(source.read_text())
-            lock = rec.get("pins_lock")
-            if isinstance(lock, dict) and lock:
-                return {str(k): list(v) if not isinstance(v, str) else [v] for k, v in lock.items()}
+        zens = list(path.glob("*.zen"))
+        if zens:
+            zp = parse_zen_pins(zens[0].read_text())
+            if zp:
+                return zp
     return None
 
 
 def load_cad_pins(path: Path) -> dict[str, list[str]]:
+    """CAD = .kicad_sym pad numbers, not the .zen names."""
     path = Path(path)
     if path.is_dir():
-        zens = list(path.glob("*.zen"))
-        if zens:
-            zen_pins = parse_zen_pins(zens[0].read_text())
-            if zen_pins:
-                return zen_pins
         source = path / "SOURCE.json"
         if source.exists():
             rec = json.loads(source.read_text())
@@ -93,9 +89,7 @@ def load_cad_pins(path: Path) -> dict[str, list[str]]:
                 sym = path / rec["symbol"]
                 if sym.exists():
                     return group_pins(parse_symbol(sym)["pins"])
-            if rec.get("pins"):
-                return {str(k): list(v) for k, v in rec["pins"].items()}
-        syms = list(path.glob("*.kicad_sym"))
+        syms = [p for p in path.glob("*.kicad_sym") if p.name != "pcbspace.kicad_sym"]
         if syms:
             return group_pins(parse_symbol(syms[0])["pins"])
         return {}
@@ -126,13 +120,18 @@ def check_pins(
         return {
             "ok": not require,
             "pin_ok": None,
-            "note": "no PINS.json / pins_lock" + (" (required)" if require else ""),
+            "note": "no .zen pin definition" + (" (required)" if require else ""),
             "cad": cad,
         }
-    report = pin_lock_report(cad, lock)
-    report["pin_ok"] = report["ok"]
-    if report["mismatches"]:
-        report["note"] = "; ".join(report["mismatches"][:6])
-    else:
-        report["note"] = None
+    zen_pads = {str(p) for pads in lock.values() for p in pads}
+    cad_pads = {str(p) for pads in cad.values() for p in pads}
+    missing = sorted(zen_pads - cad_pads)
+    report = {
+        "ok": not missing,
+        "pin_ok": not missing,
+        "mismatches": [f"zen pad {p} missing on .kicad_sym" for p in missing],
+        "cad": cad,
+        "lock": lock,
+        "note": None if not missing else "; ".join(f"zen pad {p} missing on .kicad_sym" for p in missing[:6]),
+    }
     return report

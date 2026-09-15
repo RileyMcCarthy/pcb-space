@@ -152,12 +152,12 @@ Rejected on purpose (clear error, not a silent no-op): `z-index`, `flex` / `grid
 
 ## Source (parts)
 
-Distributors are not CAD libraries. `source search` lists LCSC/JLC hits — **import does not autoselect EasyEDA.** Pass `--pick C…` when several rows match. ICs need `--footprint` (KiCad land) or opt-in `--easyeda` (candidate only), plus `--pins` from the datasheet table. EasyEDA pin names are not the schematic. Passives stay stdlib generics.
+Distributors are not CAD libraries. `source search` lists LCSC/JLC hits — **import does not autoselect EasyEDA.** Pass `--pick C…` when several rows match. ICs need `--footprint` (KiCad land) or opt-in `--easyeda` (graphics + pad numbers). Pin **names** live in the `.zen` definition (board mode, e.g. dual H-bridge). Optional `--pins` JSON only seeds that definition. Passives stay stdlib generics.
 
 ```bash
 pcb-space source search TPS61023DRLR --fab jlcpcb
 pcb-space source import  "100nF 0402" --kind generic -o components
-pcb-space source import  C919459 --footprint path/to.kicad_mod --body 1.5x1.5 --pins PINS.json
+pcb-space source import  C919459 --footprint path/to.kicad_mod --body 1.5x1.5
 pcb-space source check   components/Sensirion/SHT40-AD1B --body 1.5x1.5
 ```
 

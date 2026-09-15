@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .eda import fetch_easyeda, group_pins, parse_symbol, pin_kind
 from .geom import box_size_mm, footprint_box_local, footprint_pad_count
-from .pins import check_pins, load_pin_lock, pin_lock_report
+from .pins import check_pins, load_pin_lock
 from .lcsc import LcscHit, search_lcsc
 
 _BODY = re.compile(
@@ -169,8 +169,8 @@ def _ic_zen(r: SourceRecord) -> str:
     def_block = "\n".join(definition) if definition else ""
     pins_block = "\n".join(pin_map) if pin_map else ""
     return (
-        f'"""Sourced by pcb-space. Pin names are the datasheet table (PINS.json),\n'
-        f"not EasyEDA. LCSC {r.lcsc or ''} / {r.package}\n"
+        f'"""Sourced by pcb-space. Pin names are this .zen definition;\n'
+        f"graphics from .kicad_sym (pad numbers). LCSC {r.lcsc or ''} / {r.package}\n"
         f'"""\n\n'
         f"{io_block}\n\n"
         f"Component(\n"
@@ -342,7 +342,7 @@ def import_part(
         rec.gates = {
             "ok": False,
             "note": "IC: pass --footprint PATH (KiCad land) or --easyeda (candidate land). "
-            "Pass --pins PINS.json from the datasheet. EasyEDA is not autoselected.",
+            "Pass --pins JSON only to fill the .zen definition. EasyEDA is not autoselected.",
         }
         write_package(rec, pkg)
         return {"package": str(pkg), "record": rec.to_dict(), "search": found}
@@ -354,27 +354,29 @@ def import_part(
 
     if lock:
         rec.pins = lock
-        (pkg / "PINS.json").write_text(json.dumps(lock, indent=2) + "\n")
-        if rec.symbol:
-            cad_pins = group_pins(parse_symbol(pkg / rec.symbol)["pins"])
-            report = pin_lock_report(cad_pins, lock)
-            rec.gates["pin_ok"] = report["ok"]
-            rec.gates["pin_mismatches"] = report["mismatches"]
-            if not report["ok"]:
-                rec.status = "gate_failed"
-                rec.gates["ok"] = False
-                rec.gates["note"] = "; ".join(report["mismatches"][:6])
-                write_package(rec, pkg)
-                return {"package": str(pkg), "record": rec.to_dict(), "search": found}
+    elif rec.symbol:
+        rec.pins = group_pins(parse_symbol(pkg / rec.symbol)["pins"])
+    if rec.pins:
         rec.status = "ok"
         rec.gates["ok"] = True
         rec.gates["pin_ok"] = True
+        if rec.symbol:
+            pin_rep = check_pins(pkg, pins=rec.pins)
+            rec.gates["pin_ok"] = pin_rep.get("pin_ok")
+            rec.gates["pin_mismatches"] = pin_rep.get("mismatches") or []
+            if pin_rep.get("pin_ok") is False:
+                rec.status = "gate_failed"
+                rec.gates["ok"] = False
+                rec.gates["note"] = pin_rep.get("note")
+                write_package(rec, pkg)
+                return {"package": str(pkg), "record": rec.to_dict(), "search": found}
     else:
         rec.status = "needs_pin_lock"
         rec.gates["ok"] = False
         rec.gates["pin_ok"] = None
         rec.gates["note"] = (
-            (rec.gates.get("note") or "") + "; land attached; pass --pins from the datasheet table"
+            (rec.gates.get("note") or "")
+            + "; land attached; add a .zen definition (or --pins JSON to generate one)"
         ).strip("; ")
 
     write_package(rec, pkg)
@@ -450,7 +452,7 @@ def check_footprint(
     pkg = Path(path)
     if pkg.is_file():
         pkg = pkg.parent
-    if pkg.is_dir() and ((pkg / "PINS.json").exists() or (pkg / "SOURCE.json").exists()):
+    if pkg.is_dir() and (list(pkg.glob("*.zen")) or (pkg / "SOURCE.json").exists()):
         pin_report = check_pins(pkg)
         if pin_report.get("pin_ok") is False:
             ok = False

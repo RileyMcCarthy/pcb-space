@@ -571,17 +571,17 @@ def main(argv: list[str] | None = None) -> int:
     simp.add_argument(
         "--easyeda",
         action="store_true",
-        help="Use EasyEDA land as a candidate (not the default; still needs --pins)",
+        help="Use EasyEDA land as a candidate (not the default)",
     )
-    simp.add_argument("--pins", help="Datasheet pin table JSON (name → pad numbers)")
+    simp.add_argument("--pins", help="Optional JSON name→pads to write into the .zen definition")
     simp.set_defaults(func=cmd_source_import)
 
     schk = ss.add_parser("check", help="Fail if footprint body or pin-lock does not match datasheet")
     schk.add_argument("path", help="Package dir, .zen, or .kicad_mod")
     schk.add_argument("--body", help="Datasheet body LxW mm")
     schk.add_argument("--tol", type=float, default=0.2)
-    schk.add_argument("--pins", help="PINS.json datasheet pin table (name → pad numbers)")
-    schk.add_argument("--require-pins", action="store_true", help="Fail if no PINS.json / pins_lock")
+    schk.add_argument("--pins", help="Optional JSON pin table (otherwise the package .zen)")
+    schk.add_argument("--require-pins", action="store_true", help="Fail if the .zen has no pin definition")
     schk.set_defaults(func=cmd_source_check)
 
     args = p.parse_args(argv)

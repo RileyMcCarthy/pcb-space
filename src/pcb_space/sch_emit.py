@@ -13,7 +13,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from .pins import load_pin_lock
+from .eda import apply_zen_names_to_symbol, extract_main_symbol, parse_symbol_pins_geom
+from .pins import parse_zen_pins
 from .sch_nets import is_power_net, parse_netlist, pin_to_net
 from .sexp import matching_paren, new_uuid
 
@@ -76,6 +77,7 @@ class Part:
     y: float = 0.0
     hw: float = 8.0
     hh: float = 6.0
+    lib_sexp: str | None = None
 
 
 def _kind(ref: str) -> str:
@@ -98,21 +100,54 @@ def _passive_pins(kind: str, pin_nets: dict[str, str]) -> list[PinDef]:
     ]
 
 
-def load_component_pin_maps(root: Path | None) -> list[tuple[str, dict[str, str]]]:
-    """PINS.json name→pads inverted to pad→name, keyed by package folder."""
+@dataclass
+class PkgLib:
+    key: str
+    pad_to_name: dict[str, str]
+    lib_id: str | None
+    pins: list[PinDef]
+    sexp: str | None
+
+
+def load_packages(root: Path | None) -> list[PkgLib]:
+    """Graphics from .kicad_sym, names from .zen definition. No PINS.json."""
     if root is None or not Path(root).exists():
         return []
-    maps: list[tuple[str, dict[str, str]]] = []
-    for pins_json in Path(root).rglob("PINS.json"):
-        lock = load_pin_lock(pins_json)
-        if not lock:
-            continue
+    pkgs: list[PkgLib] = []
+    for zen in Path(root).rglob("*.zen"):
+        zen_pins = parse_zen_pins(zen.read_text())
         pad_to_name: dict[str, str] = {}
-        for name, pads in lock.items():
+        for name, pads in zen_pins.items():
             for pad in pads:
-                pad_to_name.setdefault(str(pad), str(name))
-        maps.append((pins_json.parent.name, pad_to_name))
-    return maps
+                pad_to_name.setdefault(str(pad), name)
+        syms = [p for p in zen.parent.glob("*.kicad_sym") if p.name != "pcbspace.kicad_sym"]
+        lib_id = None
+        pins: list[PinDef] = []
+        sexp = None
+        if syms:
+            lib_id, raw = extract_main_symbol(syms[0].read_text())
+            if pad_to_name:
+                raw = apply_zen_names_to_symbol(raw, pad_to_name)
+            sexp = "\t\t" + raw.replace("\n", "\n\t\t") + "\n"
+            for gp in parse_symbol_pins_geom(syms[0]):
+                name = pad_to_name.get(gp["number"], gp["name"])
+                pins.append(
+                    PinDef(gp["number"], name, gp["x"], gp["y"], gp["rot"], "")
+                )
+        pkgs.append(
+            PkgLib(
+                key=zen.parent.name,
+                pad_to_name=pad_to_name,
+                lib_id=lib_id,
+                pins=pins,
+                sexp=sexp,
+            )
+        )
+    return pkgs
+
+
+def load_component_pin_maps(root: Path | None) -> list[tuple[str, dict[str, str]]]:
+    return [(p.key, p.pad_to_name) for p in load_packages(root)]
 
 
 def _pin_map_for(comp: dict, maps: list[tuple[str, dict[str, str]]]) -> dict[str, str]:
@@ -122,6 +157,15 @@ def _pin_map_for(comp: dict, maps: list[tuple[str, dict[str, str]]]) -> dict[str
         if key.lower() in blob_l:
             return pad_map
     return {}
+
+
+def _pkg_for(comp: dict, pkgs: list[PkgLib]) -> PkgLib | None:
+    blob = " ".join(str(comp.get(k) or "") for k in ("footprint", "value", "libpart", "display"))
+    blob_l = blob.lower()
+    for pkg in pkgs:
+        if pkg.key.lower() in blob_l:
+            return pkg
+    return None
 
 
 def _fallback_pin_name(pad: str, net: str) -> str:
@@ -472,7 +516,9 @@ def _underline_pose(dx: float, dy: float) -> tuple[int, str]:
 
 
 def _build_parts(
-    net_text: str, pin_maps: list[tuple[str, dict[str, str]]] | None = None
+    net_text: str,
+    pin_maps: list[tuple[str, dict[str, str]]] | None = None,
+    pkgs: list[PkgLib] | None = None,
 ) -> list[Part]:
     comps = parse_components_rich(net_text)
     _c, nets = parse_netlist(net_text)
@@ -481,11 +527,13 @@ def _build_parts(
     for (ref, pin), net in lookup.items():
         pins_by_ref[ref][pin] = net
     maps = pin_maps or []
+    pkgs = pkgs or []
     parts: list[Part] = []
     for c in comps:
         ref = c["ref"]
         kind = _kind(ref)
         pnets = pins_by_ref.get(ref, {})
+        lib_sexp = None
         if kind in ("r", "c", "l"):
             pins = _passive_pins(kind, pnets)
             # Keep netlist pin numbers if present.
@@ -497,8 +545,17 @@ def _build_parts(
         else:
             if not pnets:
                 pnets = {"1": ""}
-            pins = _box_pins(pnets, _pin_map_for(c, maps))
-            lib_id = re.sub(r"[^A-Za-z0-9_.-]", "_", c["libpart"] or ref)[:40]
+            pkg = _pkg_for(c, pkgs)
+            if pkg and pkg.pins:
+                pins = [
+                    PinDef(p.number, p.name, p.lx, p.ly, p.rot, pnets.get(p.number, ""))
+                    for p in pkg.pins
+                ]
+                lib_id = pkg.lib_id or re.sub(r"[^A-Za-z0-9_.-]", "_", c["libpart"] or ref)[:40]
+                lib_sexp = pkg.sexp
+            else:
+                pins = _box_pins(pnets, _pin_map_for(c, maps))
+                lib_id = re.sub(r"[^A-Za-z0-9_.-]", "_", c["libpart"] or ref)[:40]
             xs = [abs(p.lx) for p in pins]
             ys = [abs(p.ly) for p in pins]
             hw = (max(xs) if xs else 16.0) + 2.0
@@ -512,6 +569,7 @@ def _build_parts(
                 pins=pins,
                 hw=hw,
                 hh=hh,
+                lib_sexp=lib_sexp,
             )
         )
     return parts
@@ -628,15 +686,21 @@ def emit_schematic(
     pin_maps: list[tuple[str, dict[str, str]]] | None = None,
 ) -> str:
     """Return a KiCad 10 .kicad_sch for this netlist."""
-    maps = pin_maps if pin_maps is not None else load_component_pin_maps(components)
-    parts = _build_parts(net_text, maps)
+    pkgs = load_packages(components)
+    maps = pin_maps if pin_maps is not None else [(p.key, p.pad_to_name) for p in pkgs]
+    parts = _build_parts(net_text, maps, pkgs)
     _layout(parts)
     _c, nets = parse_netlist(net_text)
     deg = _degree(nets)
     libs = [_lib_gnd(), _lib_vcc(), _lib_r(), _lib_c(), _lib_l()]
     seen_lib: set[str] = {"GND", "VCC", "R", "C", "L"}
     for p in parts:
-        if p.kind == "box" and p.lib_id not in seen_lib:
+        if p.lib_id in seen_lib:
+            continue
+        if p.lib_sexp:
+            libs.append(p.lib_sexp)
+            seen_lib.add(p.lib_id)
+        elif p.kind == "box":
             libs.append(_lib_box(p.lib_id, p.pins, p.ref[:1] or "U"))
             seen_lib.add(p.lib_id)
     body: list[str] = [_instance(p) for p in parts]

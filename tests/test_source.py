@@ -174,7 +174,10 @@ def test_import_ic_ok_with_footprint_and_pins(tmp_path: Path):
         opener=_opener(payload),
     )
     assert result["record"]["status"] == "ok"
-    assert (Path(result["package"]) / "PINS.json").exists()
+    assert not (Path(result["package"]) / "PINS.json").exists()
+    zens = list(Path(result["package"]).glob("*.zen"))
+    assert zens
+    assert "definition" in zens[0].read_text()
 
 
 def test_import_ic_with_wrong_land_fails_gate(tmp_path: Path):
