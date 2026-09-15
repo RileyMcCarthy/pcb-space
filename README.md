@@ -1,6 +1,6 @@
 # pcb-space
 
-**Zener (`pcb`) is the schematic language. pcb-space is the spatial compiler and fab packager in front of KiCad.**
+**Zener (`pcb`) is the netlist language and PCB seeder. pcb-space owns the schematic drawing, place, route, and fab.**
 
 This is not a Zener fork. You write a `.zen` board and a `.place.py`. **`pcb-space build` is the compiler:** schematic (`pcb build` + lint) → seed (`pcb layout --no-open`) → place → route → fab. The agent never has to click Pcbnew.
 
@@ -9,7 +9,8 @@ pcb-space source   MPN / LCSC → Zener package + SOURCE.json
       ↓
 .zen + .place.py   intent (Zener nets, CSS locks, NetReq)
       ↓
-pcb-space build    schematic → seed → place → route → fab
+pcb-space schematic   default.net → .kicad_sch (readable drawing)
+pcb-space build       seed → place → route → fab
 ```
 
 Already-committed `placed/` / `routed/` / `fab/` are left alone. `--force` or `--from place` is an opt-in rebuild (a new PCBA). `pcb layout` on those directories duplicates footprints; `seed` / `place` / `build` refuse them.

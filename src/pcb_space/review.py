@@ -14,7 +14,8 @@ from pathlib import Path
 
 from .compile import CompiledJob
 from .fab import kicad_cli
-from .sch_nets import annotate_sch_file, parse_netlist
+from .sch_emit import emit_schematic_file
+from .sch_nets import parse_netlist
 from .sexp import matching_paren
 from .silk import silk_job
 
@@ -167,95 +168,16 @@ def rewrite_definition_symbols(components: Path) -> list[str]:
     return changed
 
 
-def export_zener_schematic(zen: Path, out_dir: Path, cli: Path) -> tuple[Path | None, list[dict]]:
-    """Copy the Zener workspace, attach KiCad-10 symbols, pcb apply schematic, plot."""
+def export_schematic(net_path: Path, out_dir: Path, cli: Path, *, title: str = "") -> tuple[Path | None, list[dict]]:
+    """Write a pcb-space .kicad_sch from default.net and plot SVG/PDF."""
     steps: list[dict] = []
-    zen = Path(zen).resolve()
-    out_dir = Path(out_dir).resolve()
-    work = out_dir / "zener_sch"
-    if work.exists():
-        shutil.rmtree(work)
-    work.mkdir(parents=True)
-    root = zen.parent
-    shutil.copy2(zen, work / zen.name)
-    if (root / "pcb.toml").exists():
-        # Nested [workspace] inside the board tree makes `pcb build` fail.
-        lines = [
-            ln
-            for ln in (root / "pcb.toml").read_text().splitlines()
-            if not ln.startswith("[workspace]") and "pcb-version" not in ln
-        ]
-        (work / "pcb.toml").write_text("\n".join(lines).strip() + "\n")
-    if (root / "components").is_dir():
-        shutil.copytree(
-            root / "components",
-            work / "components",
-            ignore=shutil.ignore_patterns("_easyeda", "__pycache__"),
-        )
-        rewrite_definition_symbols(work / "components")
-    pcb_dir = root / ".pcb"
-    if pcb_dir.is_dir():
-        # Must copy, not symlink: pcb refuses symbol paths that resolve outside
-        # this workspace ("must resolve inside a workspace or dependency package").
-        shutil.copytree(
-            pcb_dir.resolve(),
-            work / ".pcb",
-            ignore=shutil.ignore_patterns("__pycache__", ".git"),
-        )
-    board = (work / zen.name).read_text()
-    if "schematic" not in board.split("Board(")[-1]:
-        (work / zen.name).write_text(
-            board.replace("layout_path = ", "schematic = True, layout_path = ", 1)
-            if "layout_path" in board
-            else board
-        )
-    elif "schematic = False" in board:
-        (work / zen.name).write_text(board.replace("schematic = False", "schematic = True", 1))
-    pcb = pcb_cli()
-    env = _kicad_env()
-    env["PATH"] = str(pcb.parent) + os.pathsep + env.get("PATH", "")
-    proc = subprocess.run(
-        [str(pcb), "apply", "schematic", "--no-open", "-f", "json", str(work / zen.name)],
-        capture_output=True,
-        text=True,
-        cwd=work,
-        env=env,
-    )
-    steps.append(
-        {
-            "cmd": [str(pcb), "apply", "schematic", "--no-open", str(work / zen.name)],
-            "returncode": proc.returncode,
-            "stdout": (proc.stdout or "")[-2000:],
-            "stderr": (proc.stderr or "")[-2000:],
-        }
-    )
-    schs = sorted(work.rglob("*.kicad_sch"))
-    if not schs:
-        return None, steps
-    sch = schs[0]
+    net_path = Path(net_path)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest_sch = out_dir / "schematic.kicad_sch"
+    emit_schematic_file(net_path, dest_sch, title=title or net_path.stem)
     sch_dir = out_dir / "sch"
     sch_dir.mkdir(exist_ok=True)
-    dest_sch = out_dir / "schematic.kicad_sch"
-    shutil.copy2(sch, dest_sch)
-    # Copy sibling project files kicad-cli may need, then drop the nested workspace.
-    for ext in (".kicad_pro", ".kicad_prl"):
-        sib = sch.with_suffix(ext)
-        if sib.exists():
-            shutil.copy2(sib, dest_sch.with_suffix(ext))
-    net_path = None
-    for cand in (
-        root / "layout" / zen.stem / "default.net",
-        root / "default.net",
-    ):
-        if cand.exists():
-            net_path = cand
-            break
-    if net_path is None:
-        found = sorted(root.rglob("default.net"))
-        net_path = found[0] if found else None
-    if net_path is not None:
-        annotate_sch_file(dest_sch, net_path)
-        shutil.copy2(dest_sch, sch)
     for old in sch_dir.glob("*.svg"):
         old.unlink()
     steps.append(_export_sch_svg(cli, dest_sch, sch_dir))
@@ -276,6 +198,18 @@ def export_zener_schematic(zen: Path, out_dir: Path, cli: Path) -> tuple[Path | 
         )
     )
     return dest_sch, steps
+
+
+def export_zener_schematic(zen: Path, out_dir: Path, cli: Path) -> tuple[Path | None, list[dict]]:
+    """Deprecated wrapper: emit from default.net next to the .zen."""
+    zen = Path(zen).resolve()
+    net = zen.parent / "layout" / zen.stem / "default.net"
+    if not net.exists():
+        found = sorted(zen.parent.rglob("default.net"))
+        net = found[0] if found else None
+    if net is None:
+        return None, [{"cmd": ["emit_schematic"], "returncode": 2, "stderr": "no default.net"}]
+    return export_schematic(net, out_dir, cli, title=zen.stem)
 
 
 def find_schematic(place: Path, pcb: Path) -> Path | None:
@@ -692,8 +626,9 @@ def review_job(
     if not cli.exists() and shutil.which(str(cli)) is None:
         result["error"] = f"kicad-cli not found ({cli})"
     else:
-        if zen_path:
-            generated, zsteps = export_zener_schematic(zen_path, out_dir, cli)
+        if net_path:
+            title = zen_path.stem if zen_path else Path(pcb).stem
+            generated, zsteps = export_schematic(net_path, out_dir, cli, title=title)
             steps.extend(zsteps)
             if generated:
                 sch_path = generated
@@ -739,7 +674,7 @@ def review_job(
         f"{len(comps)} components, {len(nets)} nets" if comps else "Netlist not found",
         "3D uses kicad-cli pcb export glb (tracks, pads, zones, silk, mask).",
         "USB-C / ESP32-C6-MINI STEP may be missing from the KiCad 3D library.",
-        "Schematic is pcb apply schematic, then pin stubs + local net labels (power keeps GND/VCC symbols).",
+        "Schematic is pcb-space emit from default.net (Zener remains the netlist; no pcb apply schematic).",
         "Silkscreen refs are legalized (size from courtyard, slots off the body) before plotting.",
         "Do not upload Gerbers from this page.",
     ]

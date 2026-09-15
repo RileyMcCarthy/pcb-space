@@ -17,6 +17,7 @@ from .route import route_job
 from .fab import fab_job
 from .place import place_job
 from .review import review_job
+from .sch_emit import emit_schematic_file
 from .schematic import lint_zen
 from .seed import seed_job
 from .silk import silk_job
@@ -200,6 +201,27 @@ def _review_pcb_path(args: argparse.Namespace, job) -> Path:
     if placed.exists():
         return placed
     return pcb
+
+
+def cmd_schematic(args: argparse.Namespace) -> int:
+    place = Path(args.place)
+    job = _job(place)
+    pcb = _pcb_path(args, job)
+    net = Path(args.net) if args.net else None
+    if net is None or not net.exists():
+        from .review import find_netlist
+
+        net = find_netlist(pcb) if pcb else None
+        if net is None:
+            hits = sorted(place.parent.rglob("default.net"))
+            net = hits[0] if hits else None
+    if net is None:
+        print("pass --net path/to/default.net (from pcb build)", file=sys.stderr)
+        return 2
+    out = Path(args.output) if args.output else place.parent / "layout" / "schematic.kicad_sch"
+    emit_schematic_file(net, out, title=place.stem)
+    print(out)
+    return 0
 
 
 def cmd_review(args: argparse.Namespace) -> int:
@@ -505,6 +527,13 @@ def main(argv: list[str] | None = None) -> int:
     sk.add_argument("-o", "--output", help="Write a copy (default: edit the board in place)")
     sk.add_argument("--no-backup", action="store_true")
     sk.set_defaults(func=cmd_silk)
+
+    sch = sub.add_parser("schematic", help="Emit a KiCad schematic from default.net")
+    sch.add_argument("place")
+    sch.add_argument("--pcb")
+    sch.add_argument("--net", help="default.net from pcb build")
+    sch.add_argument("-o", "--output", help="Output .kicad_sch")
+    sch.set_defaults(func=cmd_schematic)
 
     rv = sub.add_parser("review", help="HTML review: schematic, copper SVGs, 3D GLB")
     rv.add_argument("place")
