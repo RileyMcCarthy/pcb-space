@@ -13,6 +13,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from .pins import load_pin_lock
 from .sch_nets import is_power_net, parse_netlist, pin_to_net
 from .sexp import matching_paren, new_uuid
 
@@ -97,21 +98,98 @@ def _passive_pins(kind: str, pin_nets: dict[str, str]) -> list[PinDef]:
     ]
 
 
-def _box_pins(pin_nets: dict[str, str]) -> list[PinDef]:
-    nums = sorted(pin_nets, key=lambda n: (len(n), n))
-    n = max(len(nums), 1)
+def load_component_pin_maps(root: Path | None) -> list[tuple[str, dict[str, str]]]:
+    """PINS.json name→pads inverted to pad→name, keyed by package folder."""
+    if root is None or not Path(root).exists():
+        return []
+    maps: list[tuple[str, dict[str, str]]] = []
+    for pins_json in Path(root).rglob("PINS.json"):
+        lock = load_pin_lock(pins_json)
+        if not lock:
+            continue
+        pad_to_name: dict[str, str] = {}
+        for name, pads in lock.items():
+            for pad in pads:
+                pad_to_name.setdefault(str(pad), str(name))
+        maps.append((pins_json.parent.name, pad_to_name))
+    return maps
+
+
+def _pin_map_for(comp: dict, maps: list[tuple[str, dict[str, str]]]) -> dict[str, str]:
+    blob = " ".join(str(comp.get(k) or "") for k in ("footprint", "value", "libpart", "display"))
+    blob_l = blob.lower()
+    for key, pad_map in maps:
+        if key.lower() in blob_l:
+            return pad_map
+    return {}
+
+
+def _fallback_pin_name(pad: str, net: str) -> str:
+    if pad and not pad.isdigit():
+        return pad
+    if is_power_net(net):
+        u = net.upper()
+        if "GND" in u or u == "VSS":
+            return "GND"
+        if "PGND" in u:
+            return "PGND"
+        if net.startswith("+") or "VCC" in u or "VDD" in u or "VM" in u:
+            return net if len(net) <= 6 else "VCC"
+        return net[:8]
+    return "~"
+
+
+def _logical_pins(
+    pin_nets: dict[str, str], pad_to_name: dict[str, str]
+) -> list[tuple[str, str, str]]:
+    """(name, number, net) — merge datasheet-same pads (OUT1 on 17/18/19)."""
+    used: set[str] = set()
+    out: list[tuple[str, str, str]] = []
+    name_order: list[str] = []
+    pads_of: dict[str, list[str]] = defaultdict(list)
+    for pad, name in pad_to_name.items():
+        if name not in pads_of:
+            name_order.append(name)
+        pads_of[name].append(pad)
+    for name in name_order:
+        pads = [p for p in pads_of[name] if p in pin_nets]
+        if not pads:
+            continue
+        out.append((name, pads[0], pin_nets[pads[0]]))
+        used.update(pads)
+    extra: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for pad, net in sorted(pin_nets.items(), key=lambda t: (len(t[0]), t[0])):
+        if pad in used:
+            continue
+        name = _fallback_pin_name(pad, net)
+        if name == "~":
+            out.append(("~", pad, net))
+        else:
+            extra[name].append((pad, net))
+    for name, items in extra.items():
+        items.sort(key=lambda t: (len(t[0]), t[0]))
+        out.append((name, items[0][0], items[0][1]))
+    return out
+
+
+def _box_pins(
+    pin_nets: dict[str, str], pad_to_name: dict[str, str] | None = None
+) -> list[PinDef]:
+    logical = _logical_pins(pin_nets, pad_to_name or {})
+    n = max(len(logical), 1)
     left_n = (n + 1) // 2
-    left, right = nums[:left_n], nums[left_n:]
+    left, right = logical[:left_n], logical[left_n:]
     rows = max(len(left), len(right), 1)
     half_h = rows * _PITCH / 2
-    half_w = 12.7
+    longest = max((len(name) for name, _num, _net in logical), default=1)
+    half_w = max(10.16, longest * _FONT * 0.55 + 3.0)
     pins: list[PinDef] = []
-    for i, num in enumerate(left):
+    for i, (name, num, net) in enumerate(left):
         y = half_h - _PITCH / 2 - i * _PITCH
-        pins.append(PinDef(num, num, -(half_w + _PIN_LEN), y, 0, pin_nets[num]))
-    for i, num in enumerate(right):
+        pins.append(PinDef(num, name, -(half_w + _PIN_LEN), y, 0, net))
+    for i, (name, num, net) in enumerate(right):
         y = half_h - _PITCH / 2 - i * _PITCH
-        pins.append(PinDef(num, num, half_w + _PIN_LEN, y, 180, pin_nets[num]))
+        pins.append(PinDef(num, name, half_w + _PIN_LEN, y, 180, net))
     return pins
 
 
@@ -344,8 +422,12 @@ def _lib_box(lib_id: str, pins: list[PinDef], ref_prefix: str) -> str:
 				)
 """
         )
+    show_numbers = any(p.name != p.number for p in pins)
+    hide_nums = "no" if show_numbers else "yes"
+    hide_names = "no"
     return f"""		(symbol "{lib_id}"
-			(pin_names (offset 1.016) (hide no))
+			(pin_names (offset 1.016) (hide {hide_names}))
+			(pin_numbers (hide {hide_nums}))
 			(exclude_from_sim no)
 			(in_bom yes)
 			(on_board yes)
@@ -389,13 +471,16 @@ def _underline_pose(dx: float, dy: float) -> tuple[int, str]:
     return 90, "left" if dy > 0 else "right"
 
 
-def _build_parts(net_text: str) -> list[Part]:
+def _build_parts(
+    net_text: str, pin_maps: list[tuple[str, dict[str, str]]] | None = None
+) -> list[Part]:
     comps = parse_components_rich(net_text)
     _c, nets = parse_netlist(net_text)
     lookup = pin_to_net(nets)
     pins_by_ref: dict[str, dict[str, str]] = defaultdict(dict)
     for (ref, pin), net in lookup.items():
         pins_by_ref[ref][pin] = net
+    maps = pin_maps or []
     parts: list[Part] = []
     for c in comps:
         ref = c["ref"]
@@ -412,7 +497,7 @@ def _build_parts(net_text: str) -> list[Part]:
         else:
             if not pnets:
                 pnets = {"1": ""}
-            pins = _box_pins(pnets)
+            pins = _box_pins(pnets, _pin_map_for(c, maps))
             lib_id = re.sub(r"[^A-Za-z0-9_.-]", "_", c["libpart"] or ref)[:40]
             xs = [abs(p.lx) for p in pins]
             ys = [abs(p.ly) for p in pins]
@@ -535,9 +620,16 @@ def _degree(nets: list[dict]) -> dict[str, int]:
     return {n["name"]: len(n["nodes"]) for n in nets}
 
 
-def emit_schematic(net_text: str, *, title: str = "") -> str:
+def emit_schematic(
+    net_text: str,
+    *,
+    title: str = "",
+    components: Path | None = None,
+    pin_maps: list[tuple[str, dict[str, str]]] | None = None,
+) -> str:
     """Return a KiCad 10 .kicad_sch for this netlist."""
-    parts = _build_parts(net_text)
+    maps = pin_maps if pin_maps is not None else load_component_pin_maps(components)
+    parts = _build_parts(net_text, maps)
     _layout(parts)
     _c, nets = parse_netlist(net_text)
     deg = _degree(nets)
@@ -607,9 +699,30 @@ def emit_schematic(net_text: str, *, title: str = "") -> str:
     )
 
 
-def emit_schematic_file(net_path: Path, out_path: Path, *, title: str = "") -> Path:
+def _find_components(start: Path) -> Path | None:
+    for parent in (start.parent, *start.parents):
+        c = parent / "components"
+        if c.is_dir():
+            return c
+    return None
+
+
+def emit_schematic_file(
+    net_path: Path,
+    out_path: Path,
+    *,
+    title: str = "",
+    components: Path | None = None,
+) -> Path:
     net_path = Path(net_path)
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(emit_schematic(net_path.read_text(), title=title or net_path.stem))
+    comps = Path(components) if components else _find_components(net_path)
+    out_path.write_text(
+        emit_schematic(
+            net_path.read_text(),
+            title=title or net_path.stem,
+            components=comps,
+        )
+    )
     return out_path

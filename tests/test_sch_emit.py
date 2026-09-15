@@ -59,6 +59,18 @@ def test_emit_no_global_arrows():
     assert "global_label" not in sch
 
 
+def test_emit_uses_datasheet_pin_names_inside_the_box():
+    sch = emit_schematic(
+        NET,
+        title="t",
+        pin_maps=[("IC", {"1": "IN1", "2": "GND", "3": "VCC"})],
+    )
+    assert '(name "IN1"' in sch
+    assert '(number "1"' in sch
+    assert '(name "GND"' in sch
+    assert '(pin_numbers (hide no))' in sch
+
+
 def test_emit_one_hat_per_part_power_net():
     sch = emit_schematic(NET, title="t")
     # U1, R1, C1 each get one GND hat.
